@@ -1,0 +1,26 @@
+{
+  "name": "product-traceability-backend",
+  "version": "1.0.0",
+  "description": "Backend API for blockchain-based product traceability (manufacturer, retailer, customer).",
+  "main": "src/index.js",
+  "scripts": {
+    "dev": "nodemon src/index.js",
+    "start": "node src/index.js",
+    "lint": "echo \"lint disabled for now\""
+  },
+  "dependencies": {
+    "bcryptjs": "^3.0.3",
+    "cors": "^2.8.5",
+    "dotenv": "^16.6.1",
+    "ethers": "^6.16.0",
+    "express": "^4.22.1",
+    "jsonwebtoken": "^9.0.3",
+    "mongoose": "^8.8.0",
+    "morgan": "^1.10.0",
+    "qrcode": "^1.5.4"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.7"
+  },
+  "license": "MIT"
+}
