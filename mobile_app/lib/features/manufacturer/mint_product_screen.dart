@@ -20,6 +20,7 @@ class MintProductScreen extends ConsumerStatefulWidget {
 class _MintProductScreenState extends ConsumerState<MintProductScreen> {
   final _formKey = GlobalKey<FormState>();
   final _productIdController = TextEditingController();
+  final _productNameController = TextEditingController();
   final _locationController = TextEditingController(); // Manual or Auto
   bool _isLoading = false;
   String? _txHash;
@@ -174,7 +175,7 @@ class _MintProductScreenState extends ConsumerState<MintProductScreen> {
     try {
       final api = ref.read(apiServiceProvider);
       // NOTE: Backend generates the ID. We send location.
-      final result = await api.createProduct(_locationController.text, flags: flags);
+      final result = await api.createProduct(_locationController.text, _productNameController.text, flags: flags);
       
       setState(() {
          _txHash = result['txHash'];
@@ -251,6 +252,15 @@ class _MintProductScreenState extends ConsumerState<MintProductScreen> {
                   ),
                 ),
                 validator: (v) => v!.isEmpty ? "Required" : null,
+              ),
+              const SizedBox(height: 16),
+              TextFormField(
+                controller: _productNameController,
+                decoration: const InputDecoration(
+                  labelText: "Product Name (e.g. Nike Air)",
+                  prefixIcon: Icon(Icons.shopping_bag_outlined),
+                ),
+                validator: (v) => v!.isEmpty ? "Name required" : null,
               ),
               const SizedBox(height: 16),
               TextFormField(

@@ -45,6 +45,8 @@
 	<true/>
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
+	<key>NSCameraUsageDescription</key>
+	<string>We need camera access to scan product QR codes.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>We need your location to record where the product is being processed in the supply chain.</string>
 </dict>

@@ -18,7 +18,9 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
   // New Fields
   final _companyNameController = TextEditingController();
   final _licenseIdController = TextEditingController();
-  String _businessType = 'Other'; 
+  final _contactPersonController = TextEditingController();
+  final _contactPhoneController = TextEditingController();
+  String _businessType = 'Other';  
   String? _registeredLocation; // "lat,long"
   
   String _selectedRole = 'Manufacturer'; // Default
@@ -67,7 +69,9 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
         _companyNameController.text.trim(),
         _registeredLocation,
         _licenseIdController.text.trim(),
-        _businessType
+        _businessType,
+        _contactPersonController.text.trim(),
+        _contactPhoneController.text.trim()
       );
       
       if (mounted) {
@@ -96,6 +100,17 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
               controller: _emailController,
               decoration: const InputDecoration(labelText: "Email", prefixIcon: Icon(Icons.email)),
               keyboardType: TextInputType.emailAddress,
+            ),
+            const SizedBox(height: 16),
+            TextField(
+              controller: _contactPersonController,
+              decoration: const InputDecoration(labelText: "Contact Person Name", prefixIcon: Icon(Icons.person)),
+            ),
+            const SizedBox(height: 16),
+            TextField(
+              controller: _contactPhoneController,
+              decoration: const InputDecoration(labelText: "Contact Phone", prefixIcon: Icon(Icons.phone)),
+              keyboardType: TextInputType.phone,
             ),
             const SizedBox(height: 16),
             TextField(

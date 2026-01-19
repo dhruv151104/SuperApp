@@ -28,6 +28,8 @@ app.use(morgan("dev"));
 const PORT = process.env.PORT || 4000;
 const MONGODB_URI =
   process.env.MONGODB_URI || "mongodb://localhost:27017/product_traceability";
+
+const analyticsRouter = require("./analytics");
 const SEPOLIA_RPC_URL = process.env.SEPOLIA_RPC_URL || "";
 const PRODUCT_TRACEABILITY_CONTRACT =
   process.env.PRODUCT_TRACEABILITY_CONTRACT || "";
@@ -61,66 +63,7 @@ function initBlockchain() {
 }
 
 // MongoDB models
-const hopSchema = new mongoose.Schema(
-  {
-    productId: { type: String, index: true },
-    role: { type: String, enum: ["Manufacturer", "Retailer"] },
-    actor: String,
-    location: String,
-    timestamp: Number,
-    flags: [String] // New field
-  },
-  { _id: false }
-);
-
-// ... existing productHistorySchema ...
-
-// ...
-
-
-
-// ...
-
-// Format Hops in getProduct
-
-
-// ...
-
-
-
-const productHistorySchema = new mongoose.Schema(
-  {
-    productId: { type: String, unique: true, index: true },
-    manufacturer: String,
-    status: { type: String, enum: ["Active", "Completed"] },
-    hops: [hopSchema],
-    createdAt: { type: Date, default: Date.now },
-  },
-  { collection: "product_history" }
-);
-
-const ProductHistory = mongoose.model("ProductHistory", productHistorySchema);
-
-
-const userSchema = new mongoose.Schema(
-  {
-    email: { type: String, unique: true, required: true },
-    passwordHash: { type: String, required: true },
-    role: {
-      type: String,
-      enum: ["Manufacturer", "Retailer"],
-      required: true,
-    },
-    walletAddress: { type: String, required: true },
-    companyName: String,
-    registeredLocation: String,
-    licenseId: String,
-    businessType: String,
-  },
-  { collection: "users" }
-);
-
-const User = mongoose.model("User", userSchema);
+const { ProductHistory, User } = require("./models");
 
 function authMiddleware(requiredRole = null) {
   return async (req, res, next) => {
@@ -158,7 +101,7 @@ function authMiddleware(requiredRole = null) {
 
 app.post("/auth/register", async (req, res) => {
   try {
-    const { email, password, role, walletAddress, companyName, registeredLocation, licenseId, businessType } = req.body;
+    const { email, password, role, walletAddress, companyName, registeredLocation, licenseId, businessType, contactPerson, contactPhone } = req.body;
 
     if (!email || !password || !role || !walletAddress) {
       return res.status(400).json({ error: "All fields required" });
@@ -180,7 +123,9 @@ app.post("/auth/register", async (req, res) => {
       companyName,
       registeredLocation,
       licenseId,
-      businessType
+      businessType,
+      contactPerson,
+      contactPhone
     });
 
     res.json({ success: true, userId: user._id });
@@ -215,9 +160,51 @@ app.post("/auth/login", async (req, res) => {
       role: user.role,
       companyName: user.companyName,
       registeredLocation: user.registeredLocation,
+      contactPerson: user.contactPerson,
+      contactPhone: user.contactPhone,
+      walletAddress: user.walletAddress,
+      licenseId: user.licenseId
     });
   } catch (err) {
     res.status(500).json({ error: "Login failed" });
+  }
+});
+
+app.get("/user/history", authMiddleware(), async (req, res) => {
+  try {
+    const { walletAddress, role } = req.user;
+    let query = {};
+
+    if (role === "Manufacturer") {
+      // Products minted by this manufacturer
+      query = { manufacturer: walletAddress };
+    } else if (role === "Retailer") {
+      // Products where this retailer appears in hops
+      query = { "hops.actor": walletAddress };
+    } else {
+      // Consumer or other - maybe just show nothing or their specific actions if we tracked them
+      // For now, return empty
+      return res.json([]);
+    }
+
+    const history = await ProductHistory.find(query)
+      .sort({ createdAt: -1 })
+      .select("productId productName status createdAt hops"); // Select fields needed for list
+
+    // Format for frontend
+    const formatted = history.map(p => ({
+       productId: p.productId,
+       productName: p.productName || "Unnamed Product",
+       status: p.status,
+       date: p.createdAt,
+       // If retailer, maybe show when they scanned it?
+       // For simplicity, just return the product metadata
+    }));
+
+    res.json(formatted);
+  } catch (err) {
+    console.error("[History] Error:", err);
+    res.status(500).json({ error: "Failed to fetch history" });
   }
 });
 
@@ -226,6 +213,8 @@ app.post("/auth/login", async (req, res) => {
 app.get("/health", (req, res) => {
   res.json({ ok: true });
 });
+
+app.use("/analytics", authMiddleware("Manufacturer"), analyticsRouter);
 
 // Admin endpoints: allowlist management
 app.post("/admin/manufacturers", async (req, res) => {
@@ -266,10 +255,21 @@ app.post("/admin/retailers", async (req, res) => {
   }
 });
 
+// DEBUG: Force wipe history
+app.delete("/admin/nuke", async (req, res) => {
+  try {
+     await ProductHistory.deleteMany({});
+     console.log("[Nuke] DB wiped via API");
+     res.json({ success: true, message: "DB wiped" });
+  } catch(e) {
+     res.status(500).json({ error: e.message });
+  }
+});
+
 app.post("/product",authMiddleware("Manufacturer"), async (req, res) => {
   console.log("[createProduct] Request received. user:", req.user.walletAddress, "flags:", req.body.flags);
   try {
-    const { location, flags } = req.body;
+    const { location, flags, productName } = req.body;
 
     if (!location) {
       return res.status(400).json({ error: "location is required" });
@@ -288,33 +288,34 @@ app.post("/product",authMiddleware("Manufacturer"), async (req, res) => {
     const tx = await contract.createProduct(productId, location);
     console.log("[createProduct] Tx sent:", tx.hash);
     
-    // Wait for confirmation OR timeout after 15s
+    // Wait for confirmation OR timeout after 30s (Increased from 15s)
     try {
       await Promise.race([
         tx.wait(),
-        new Promise((_, reject) => setTimeout(() => reject(new Error("Mining timed out")), 15000))
+        new Promise((_, reject) => setTimeout(() => reject(new Error("Mining timed out")), 30000))
       ]);
       console.log("[createProduct] Tx confirmed");
-    } catch (e) {
-      console.warn("[createProduct] Mining took too long or failed:", e.message);
-      // We proceed anyway since the tx was broadcast. 
-      // The frontend will get the txHash and can check status later if needed.
-    }
+      
+      // Attribution: ONLY Save to local DB if mining confirmed
+      await ProductHistory.create({
+        productId,
+        productName: productName || "Unnamed Product",
+        manufacturer: req.user.walletAddress, 
+        status: "Active",
+        hops: [{
+          role: "Manufacturer",
+          actor: req.user.walletAddress,
+          location: location,
+          timestamp: Math.floor(Date.now() / 1000),
+          flags: flags || []
+        }]
+      });
+      console.log("[createProduct] DB entry created");
 
-    // Attribution: Save to local DB so we know WHO did it (since chain says "Server")
-    await ProductHistory.create({
-      productId,
-      manufacturer: req.user.walletAddress, // Store User's wallet
-      status: "Active",
-      hops: [{
-        role: "Manufacturer",
-        actor: req.user.walletAddress,
-        location: location,
-        timestamp: Math.floor(Date.now() / 1000),
-        flags: flags || []
-      }]
-    });
-    console.log("[createProduct] DB entry created");
+    } catch (e) {
+      console.error("[createProduct] Mining failed or timed out:", e.message);
+      return res.status(500).json({ error: "Blockchain transaction failed. Please try again." });
+    }
 
     // Generate QR code (base64)
     const qrDataUrl = await QRCode.toDataURL(productId);
@@ -389,12 +390,22 @@ app.get("/product/:id", async (req, res) => {
     
     res.json({
       productId: idOnChain,
+      productName: history ? history.productName : "Unknown Product",
       manufacturer: realManufacturer,
       manufacturerName,
       hops: formattedHops,
     });
   } catch (err) {
     console.error(err);
+    
+    // Self-Healing: If blockchain explicitly fails with BAD_DATA or reverted (meaning ID doesn't exist),
+    // remove the ghost record from DB.
+    if (err.code === 'BAD_DATA' || err.message.includes('reverted') || err.message.includes('call revert exception')) {
+       console.warn(`[Self-Healing] Detected ghost record for ${productId}. Deleting from DB.`);
+       await ProductHistory.deleteOne({ productId });
+       return res.status(404).json({ error: "Product not found on blockchain (Ghost record removed)" });
+    }
+
     res
       .status(500)
       .json({ error: "Failed to fetch product", details: err.message });

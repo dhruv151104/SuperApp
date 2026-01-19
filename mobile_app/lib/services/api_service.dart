@@ -24,6 +24,10 @@ class ApiService {
       await _storage.write(key: 'user_role', value: data['role']);
       if(data['companyName'] != null) await _storage.write(key: 'company_name', value: data['companyName']);
       if(data['registeredLocation'] != null) await _storage.write(key: 'registered_location', value: data['registeredLocation']);
+      if(data['contactPerson'] != null) await _storage.write(key: 'contact_person', value: data['contactPerson']);
+      if(data['contactPhone'] != null) await _storage.write(key: 'contact_phone', value: data['contactPhone']);
+      if(data['walletAddress'] != null) await _storage.write(key: 'wallet_address', value: data['walletAddress']);
+      if(data['licenseId'] != null) await _storage.write(key: 'license_id', value: data['licenseId']);
       return data;
     } else {
       throw Exception(jsonDecode(response.body)['error'] ?? 'Login failed');
@@ -37,7 +41,9 @@ class ApiService {
       String companyName,
       String? registeredLocation, // Optional
       String licenseId,
-      String businessType
+      String businessType,
+      String contactPerson,
+      String contactPhone
   ) async {
     
     final response = await http.post(
@@ -51,7 +57,9 @@ class ApiService {
         'companyName': companyName,
         'registeredLocation': registeredLocation,
         'licenseId': licenseId,
-        'businessType': businessType
+        'businessType': businessType,
+        'contactPerson': contactPerson,
+        'contactPhone': contactPhone
       }),
     );
 
@@ -65,9 +73,10 @@ class ApiService {
   Future<void> logout() async {
     await _storage.delete(key: 'jwt_token');
     await _storage.delete(key: 'user_role');
+    await _storage.deleteAll(); // Clear all
   }
 
-  Future<Map<String, dynamic>> createProduct(String location, {List<String>? flags}) async {
+  Future<Map<String, dynamic>> createProduct(String location, String productName, {List<String>? flags}) async {
     final token = await getToken();
     final response = await http.post(
       Uri.parse('$baseUrl/product'),
@@ -77,6 +86,7 @@ class ApiService {
       },
       body: jsonEncode({
         'location': location,
+        'productName': productName,
         'flags': flags ?? []
       }),
     );
@@ -125,6 +135,61 @@ class ApiService {
       'companyName': await _storage.read(key: 'company_name'),
       'registeredLocation': await _storage.read(key: 'registered_location'),
       'role': await _storage.read(key: 'user_role'),
+      'contactPerson': await _storage.read(key: 'contact_person'),
+      'contactPhone': await _storage.read(key: 'contact_phone'),
+      'walletAddress': await _storage.read(key: 'wallet_address'),
+      'licenseId': await _storage.read(key: 'license_id'),
     };
+  }
+
+  Future<List<dynamic>> getUserHistory() async {
+    final token = await getToken();
+    final response = await http.get(
+      Uri.parse('$baseUrl/user/history'),
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer $token',
+      },
+    );
+
+    if (response.statusCode == 200) {
+      return jsonDecode(response.body) as List<dynamic>;
+    } else {
+      throw Exception('Failed to fetch user history');
+    }
+  }
+
+  Future<Map<String, dynamic>> getAnalyticsDashboard() async {
+    final token = await getToken();
+    final response = await http.get(
+      Uri.parse('$baseUrl/analytics/dashboard'),
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer $token',
+      },
+    );
+
+    if (response.statusCode == 200) {
+      return jsonDecode(response.body);
+    } else {
+      throw Exception(jsonDecode(response.body)['error'] ?? 'Failed to fetch analytics');
+    }
+  }
+
+  Future<List<dynamic>> getAnalyticsPartners() async {
+    final token = await getToken();
+    final response = await http.get(
+      Uri.parse('$baseUrl/analytics/partners'),
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer $token',
+      },
+    );
+
+    if (response.statusCode == 200) {
+      return jsonDecode(response.body) as List<dynamic>;
+    } else {
+      throw Exception('Failed to fetch partners');
+    }
   }
 }

@@ -180,6 +180,13 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
           color: Colors.blue,
           onTap: () => context.push('/mint-product'), 
         ),
+      if (currentRole == 'manufacturer')
+        _ActionItem(
+          title: "Analytics",
+          icon: Icons.pie_chart,
+          color: Colors.teal,
+          onTap: () => context.push('/dashboard'),
+        ),
       if (currentRole == 'retailer')
         _ActionItem(
           title: "Verify Stock",
@@ -187,25 +194,24 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
           color: Colors.orange,
           onTap: () => context.push('/scanner'),
         ),
+      if (currentRole == 'retailer')
+        _ActionItem(
+          title: "Batch Scan",
+          icon: Icons.checklist,
+          color: Colors.purple,
+          onTap: () => context.push('/batch-scan'),
+        ),
       _ActionItem(
-        title: "Scan History",
+        title: currentRole == "manufacturer" ? "Mint History" : "Scan History",
         icon: Icons.history,
         color: Colors.purple,
-        onTap: () {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text("Scan History coming soon!")),
-          );
-        },
+        onTap: () => context.push('/history'),
       ),
       _ActionItem(
-        title: "Settings",
-        icon: Icons.settings_outlined,
-        color: Colors.grey,
-        onTap: () {
-           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text("Settings coming soon!")),
-          );
-        },
+        title: "Profile",
+        icon: Icons.person_outline,
+        color: Colors.blueGrey,
+        onTap: () => context.push('/profile'),
       ),
     ];
 

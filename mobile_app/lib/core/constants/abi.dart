@@ -1,7 +1,7 @@
 class AppConstants {
   // Replace with your actual deployed contract address
-  static const String contractAddress = "0x5FbDB2315678afecb367f032d93F642f64180aa3"; 
-  static const String rpcUrl = "http://localhost:8545"; 
+  static const String contractAddress = "0x3DCF2211a2CFE6e2D748f0EA8E3caa047c5ac0d8"; 
+  static const String rpcUrl = "https://sepolia.infura.io/v3/5c6786ffd72742849d3e20212f95d996"; 
   
   static const List<Map<String, dynamic>> contractAbi = [
   {
