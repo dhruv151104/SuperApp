@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
+import 'package:geolocator/geolocator.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:product_traceability_mobile/core/providers.dart';
 import 'package:product_traceability_mobile/core/theme/app_theme.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:intl/intl.dart';
+import 'package:product_traceability_mobile/features/product/widgets/product_map.dart';
 
 class ProductDetailsScreen extends ConsumerStatefulWidget {
   final String productId;
@@ -53,18 +55,82 @@ class _ProductDetailsScreenState extends ConsumerState<ProductDetailsScreen> {
   Future<void> _verifyProduct() async {
     setState(() => _isVerifying = true);
     try {
-      final api = ref.read(apiServiceProvider);
-      const location = "Retailer Location (Auto)"; 
+      // Check service
+      bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
+      if (!serviceEnabled) {
+        if (mounted) {
+           _showLocationDialog(
+              "Location Services Disabled", 
+              "Please enable location services to verify this product.",
+              () async {
+                 await Geolocator.openLocationSettings();
+                 // User can try again manually
+              }
+           );
+        }
+        return;
+      }
+
+      // Check permission
+      LocationPermission permission = await Geolocator.checkPermission();
+      if (permission == LocationPermission.denied) {
+        permission = await Geolocator.requestPermission();
+        if (permission == LocationPermission.denied) {
+           if (mounted) {
+             ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Location permissions are denied')));
+           }
+           return;
+        }
+      }
       
+      if (permission == LocationPermission.deniedForever) {
+         if (mounted) {
+           _showLocationDialog(
+              "Permission Denied", 
+              "Location permission is permanently denied. Please enable it in settings.",
+              () async {
+                 await Geolocator.openAppSettings();
+              }
+           );
+        }
+        return;
+      }
+
+      final position = await Geolocator.getCurrentPosition(desiredAccuracy: LocationAccuracy.best);
+      final location = "${position.latitude}, ${position.longitude}";
+      
+      final api = ref.read(apiServiceProvider);
       await api.addRetailerHop(widget.productId, location);
       
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Product Verified & Added to History!")));
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Product Verified at $location!")));
+      }
       _fetchDetails(); // Refresh
     } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Error: $e")));
+      if(mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Error: $e")));
     } finally {
       if (mounted) setState(() => _isVerifying = false);
     }
+  }
+
+  void _showLocationDialog(String title, String message, VoidCallback onAction) {
+    showDialog(
+      context: context, 
+      builder: (ctx) => AlertDialog(
+        title: Text(title),
+        content: Text(message),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("Cancel")),
+          TextButton(
+            onPressed: () {
+              Navigator.pop(ctx);
+              onAction();
+            }, 
+            child: const Text("Settings")
+          ),
+        ],
+      )
+    );
   }
 
   @override
@@ -84,6 +150,7 @@ class _ProductDetailsScreenState extends ConsumerState<ProductDetailsScreen> {
 
     // Parsing Data: { productId, manufacturer, hops: [{role, actor, location, timestamp}] }
     final history = _productData!['hops'] as List<dynamic>;
+    final locations = history.map((e) => e['location'].toString()).toList();
 
     return Scaffold(
       appBar: AppBar(title: const Text("Product Traceability")),
@@ -101,6 +168,8 @@ class _ProductDetailsScreenState extends ConsumerState<ProductDetailsScreen> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             _buildProductHeader(),
+            const SizedBox(height: 24),
+            ProductMap(locations: locations),
             const SizedBox(height: 32),
             Text(
               "Journey Timeline",
@@ -185,7 +254,42 @@ class _ProductDetailsScreenState extends ConsumerState<ProductDetailsScreen> {
                             const SizedBox(height: 4),
                             _InfoRow(icon: Icons.location_on, text: location),
                              const SizedBox(height: 4),
-                            _InfoRow(icon: Icons.person, text: "${actor.substring(0, 6)}...${actor.substring(38)}"),
+                            _InfoRow(
+                              icon: Icons.business, 
+                              text: hop['actorName'] != null && hop['actorName'] != 'Unknown' 
+                                  ? hop['actorName'] 
+                                  : "Unregistered Entity",
+                              color: Colors.black87,
+                              fontWeight: FontWeight.w600
+                            ),
+                            _InfoRow(
+                              icon: Icons.person_outline, 
+                              text: "${actor.substring(0, 6)}...${actor.substring(38)}",
+                              fontSize: 11
+                            ),
+                            
+                            // Flags
+                             if(hop['flags'] != null && (hop['flags'] as List).isNotEmpty) ...[
+                               const SizedBox(height: 8),
+                               Container(
+                                 padding: const EdgeInsets.all(8),
+                                 decoration: BoxDecoration(
+                                   color: Colors.red.withOpacity(0.1),
+                                   borderRadius: BorderRadius.circular(8),
+                                   border: Border.all(color: Colors.red.withOpacity(0.3))
+                                 ),
+                                 child: Row(
+                                   children: [
+                                     const Icon(Icons.warning_amber_rounded, color: Colors.red, size: 16),
+                                     const SizedBox(width: 8),
+                                     Expanded(child: Text(
+                                       (hop['flags'] as List).join(", "),
+                                       style: const TextStyle(color: Colors.red, fontSize: 12, fontWeight: FontWeight.bold)
+                                     ))
+                                   ],
+                                 ),
+                               )
+                             ]
                           ],
                         ),
                       ),
@@ -217,6 +321,16 @@ class _ProductDetailsScreenState extends ConsumerState<ProductDetailsScreen> {
             "Authentic Product",
             style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 20),
           ),
+          
+          if (_productData != null && _productData!['manufacturerName'] != null)
+            Padding(
+              padding: const EdgeInsets.only(top: 8.0),
+              child: Text(
+                "by ${_productData!['manufacturerName']}",
+                style: const TextStyle(color: Colors.white70, fontSize: 14),
+              ),
+            ),
+
           const SizedBox(height: 8),
           Container(
              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
@@ -238,7 +352,17 @@ class _ProductDetailsScreenState extends ConsumerState<ProductDetailsScreen> {
 class _InfoRow extends StatelessWidget {
   final IconData icon;
   final String text;
-  const _InfoRow({required this.icon, required this.text});
+  final Color? color;
+  final FontWeight? fontWeight;
+  final double? fontSize;
+
+  const _InfoRow({
+    required this.icon, 
+    required this.text,
+    this.color,
+    this.fontWeight,
+    this.fontSize
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -246,7 +370,14 @@ class _InfoRow extends StatelessWidget {
       children: [
         Icon(icon, size: 14, color: Colors.grey),
         const SizedBox(width: 8),
-        Expanded(child: Text(text, style: TextStyle(color: Colors.grey[600], fontSize: 13))),
+        Expanded(child: Text(
+          text, 
+          style: TextStyle(
+            color: color ?? Colors.grey[600], 
+            fontSize: fontSize ?? 13,
+            fontWeight: fontWeight ?? FontWeight.normal
+          )
+        )),
       ],
     );
   }

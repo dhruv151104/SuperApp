@@ -88,18 +88,21 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     return Row(
       mainAxisAlignment: MainAxisAlignment.spaceBetween,
       children: [
-        Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              "Hello, ${_role?.toUpperCase() ?? widget.role.toUpperCase()}",
-              style: AppTheme.textTheme.labelLarge?.copyWith(color: Colors.grey),
-            ),
-            Text(
-              "Welcome Back",
-              style: AppTheme.textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.bold),
-            ),
-          ],
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                "Hello, ${_role?.toUpperCase() ?? widget.role.toUpperCase()}",
+                style: AppTheme.textTheme.labelLarge?.copyWith(color: Colors.grey),
+                overflow: TextOverflow.ellipsis,
+              ),
+              Text(
+                "Welcome Back",
+                style: AppTheme.textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.bold),
+              ),
+            ],
+          ),
         ),
         CircleAvatar(
           backgroundColor: Colors.white,
@@ -182,19 +185,27 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
           title: "Verify Stock",
           icon: Icons.inventory_2_outlined,
           color: Colors.orange,
-          onTap: () {}, // TODO: Scanner handles this
+          onTap: () => context.push('/scanner'),
         ),
       _ActionItem(
         title: "Scan History",
         icon: Icons.history,
         color: Colors.purple,
-        onTap: () {},
+        onTap: () {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text("Scan History coming soon!")),
+          );
+        },
       ),
       _ActionItem(
         title: "Settings",
         icon: Icons.settings_outlined,
         color: Colors.grey,
-        onTap: () {},
+        onTap: () {
+           ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text("Settings coming soon!")),
+          );
+        },
       ),
     ];
 

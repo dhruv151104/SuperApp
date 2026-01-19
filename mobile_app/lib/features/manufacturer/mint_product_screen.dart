@@ -24,6 +24,8 @@ class _MintProductScreenState extends ConsumerState<MintProductScreen> {
   bool _isLoading = false;
   String? _txHash;
 
+  bool _locationFetched = false;
+
   @override
   void initState() {
      super.initState();
@@ -33,31 +35,146 @@ class _MintProductScreenState extends ConsumerState<MintProductScreen> {
   }
 
   Future<void> _getCurrentLocation() async {
-    // Basic Permissions Check
+    setState(() => _locationFetched = false);
+    _locationController.clear();
+    
+    // Check service
+    bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
+    if (!serviceEnabled) {
+      if (mounted) {
+         _showLocationDialog(
+            "Location Services Disabled", 
+            "Please enable location services to mint a product.",
+            () async {
+               await Geolocator.openLocationSettings();
+               _getCurrentLocation(); // Retry
+            }
+         );
+      }
+      return;
+    }
+
+    // Check permission
     LocationPermission permission = await Geolocator.checkPermission();
     if (permission == LocationPermission.denied) {
       permission = await Geolocator.requestPermission();
-      if (permission == LocationPermission.denied) return;
+      if (permission == LocationPermission.denied) {
+        if (mounted) {
+           ScaffoldMessenger.of(context).showSnackBar(
+             SnackBar(
+               content: const Text("Location permissions are required."),
+               action: SnackBarAction(label: "Retry", onPressed: _getCurrentLocation),
+             )
+           );
+        }
+        return;
+      }
     }
     
+    if (permission == LocationPermission.deniedForever) {
+       if (mounted) {
+         _showLocationDialog(
+            "Permission Denied", 
+            "Location permission is permanently denied. Please enable it in settings.",
+            () async {
+               await Geolocator.openAppSettings();
+               _getCurrentLocation();
+            }
+         );
+      }
+      return;
+    }
+
     try {
-      final position = await Geolocator.getCurrentPosition(desiredAccuracy: LocationAccuracy.high);
+      final position = await Geolocator.getCurrentPosition(desiredAccuracy: LocationAccuracy.best);
       if(mounted) {
-        _locationController.text = "${position.latitude}, ${position.longitude}";
+        setState(() {
+           _locationController.text = "${position.latitude}, ${position.longitude}";
+           _locationFetched = true;
+        });
       }
     } catch (e) {
-      // debugPrint("Error getting location: $e");
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Error getting location: $e")));
+      }
     }
   }
 
-  Future<void> _mintProduct() async {
+  void _showLocationDialog(String title, String message, VoidCallback onAction) {
+    showDialog(
+      context: context, 
+      builder: (ctx) => AlertDialog(
+        title: Text(title),
+        content: Text(message),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("Cancel")),
+          TextButton(
+            onPressed: () {
+              Navigator.pop(ctx);
+              onAction();
+            }, 
+            child: const Text("Settings")
+          ),
+        ],
+      )
+    );
+  }
+
+
+
+  Future<void> _checkGeofenceAndMint() async {
+     // Fetch registered location
+     final api = ref.read(apiServiceProvider);
+     final profile = await api.getUserProfile();
+     final regLoc = profile['registeredLocation'];
+     
+     if (regLoc != null && _locationController.text.isNotEmpty) {
+        try {
+          final currentParts = _locationController.text.split(',').map((e) => double.parse(e.trim())).toList();
+          final regParts = regLoc.split(',').map((e) => double.parse(e.trim())).toList();
+          
+          final distance = Geolocator.distanceBetween(
+             currentParts[0], currentParts[1], 
+             regParts[0], regParts[1]
+          ); // in meters
+
+          if (distance > 2) { // 2m threshold (Testing)
+             bool proceed = await showDialog(
+               context: context, 
+               builder: (ctx) => AlertDialog(
+                 title: const Text("Geofence Warning"),
+                 content: Text("You are ${(distance).toStringAsFixed(1)}m away from your registered factory location.\n\nThis action will be flagged as 'Off-site Minting'."),
+                 actions: [
+                   TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text("Cancel")),
+                   TextButton(onPressed: () => Navigator.pop(ctx, true), child: const Text("Proceed Anyway", style: TextStyle(color: Colors.red))),
+                 ],
+               )
+             ) ?? false;
+
+             if (!proceed) return;
+             // User chose to proceed, so we flag it
+             _mintProduct(flags: ["Off-site Minting"]);
+             return;
+          }
+        } catch (e) {
+          // Parse error or something, ignore geofence
+        }
+     }
+     _mintProduct();
+  }
+
+  Future<void> _mintProduct({List<String>? flags}) async {
     if (!_formKey.currentState!.validate()) return;
+    if (!_locationFetched) {
+       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Location not fetched yet.")));
+       return; 
+    }
 
     setState(() => _isLoading = true);
     try {
       final api = ref.read(apiServiceProvider);
       // NOTE: Backend generates the ID. We send location.
-      final result = await api.createProduct(_locationController.text);
+      final result = await api.createProduct(_locationController.text, flags: flags);
       
       setState(() {
          _txHash = result['txHash'];
@@ -125,6 +242,7 @@ class _MintProductScreenState extends ConsumerState<MintProductScreen> {
               const SizedBox(height: 16),
               TextFormField(
                 controller: _productIdController,
+                readOnly: true, // ID is auto-generated mostly
                 decoration: InputDecoration(
                   labelText: "Product ID (Unique)",
                   suffixIcon: IconButton(
@@ -137,11 +255,18 @@ class _MintProductScreenState extends ConsumerState<MintProductScreen> {
               const SizedBox(height: 16),
               TextFormField(
                 controller: _locationController,
-                decoration: const InputDecoration(
+                readOnly: true, // Disable editing
+                decoration: InputDecoration(
                   labelText: "Manufacturing Location",
-                  prefixIcon: Icon(Icons.location_on_outlined),
+                  prefixIcon: const Icon(Icons.location_on_outlined),
+                  suffixIcon: _locationFetched 
+                    ? const Icon(Icons.check, color: Colors.green) 
+                    : IconButton(
+                        icon: const Icon(Icons.my_location, color: Colors.orange),
+                        onPressed: _isLoading ? null : _getCurrentLocation,
+                      ),
                 ),
-                validator: (v) => v!.isEmpty ? "Required" : null,
+                validator: (v) => v!.isEmpty ? "Location required" : null,
               ),
               const SizedBox(height: 16),
               
@@ -177,14 +302,14 @@ class _MintProductScreenState extends ConsumerState<MintProductScreen> {
               const SizedBox(height: 32),
 
               ElevatedButton.icon(
-                onPressed: _isLoading ? null : _mintProduct,
+                onPressed: (_isLoading || !_locationFetched) ? null : _checkGeofenceAndMint,
                 icon: _isLoading ? const SizedBox.shrink() : const Icon(Icons.check),
                 label: _isLoading 
                     ? const CircularProgressIndicator(color: Colors.white) 
                     : const Text("Mint on Blockchain"),
                    style: ElevatedButton.styleFrom(
                     padding: const EdgeInsets.all(16),
-                    backgroundColor: AppTheme.successColor
+                    backgroundColor: _locationFetched ? AppTheme.successColor : Colors.grey
                   ),
               ),
 

@@ -68,9 +68,25 @@ const hopSchema = new mongoose.Schema(
     actor: String,
     location: String,
     timestamp: Number,
+    flags: [String] // New field
   },
   { _id: false }
 );
+
+// ... existing productHistorySchema ...
+
+// ...
+
+
+
+// ...
+
+// Format Hops in getProduct
+
+
+// ...
+
+
 
 const productHistorySchema = new mongoose.Schema(
   {
@@ -96,6 +112,10 @@ const userSchema = new mongoose.Schema(
       required: true,
     },
     walletAddress: { type: String, required: true },
+    companyName: String,
+    registeredLocation: String,
+    licenseId: String,
+    businessType: String,
   },
   { collection: "users" }
 );
@@ -104,23 +124,33 @@ const User = mongoose.model("User", userSchema);
 
 function authMiddleware(requiredRole = null) {
   return async (req, res, next) => {
+    console.log("[Auth] Checking token for role:", requiredRole);
     const authHeader = req.headers.authorization;
-    if (!authHeader)
+    if (!authHeader) {
+      console.log("[Auth] Missing header");
       return res.status(401).json({ error: "Missing Authorization header" });
+    }
 
     const token = authHeader.split(" ")[1];
-    if (!token) return res.status(401).json({ error: "Invalid token format" });
+    if (!token) {
+        console.log("[Auth] Invalid token format");
+        return res.status(401).json({ error: "Invalid token format" });
+    }
 
     try {
       const decoded = jwt.verify(token, process.env.JWT_SECRET);
       req.user = decoded;
+      console.log("[Auth] Token verified. decoded:", decoded);
 
       if (requiredRole && decoded.role !== requiredRole) {
+        console.log("[Auth] Role mismatch. Required:", requiredRole, "Got:", decoded.role);
         return res.status(403).json({ error: "Forbidden: role mismatch" });
       }
 
+      console.log("[Auth] Success. Calling next()");
       next();
     } catch (err) {
+      console.log("[Auth] Verification failed:", err.message);
       return res.status(401).json({ error: "Invalid or expired token" });
     }
   };
@@ -128,7 +158,7 @@ function authMiddleware(requiredRole = null) {
 
 app.post("/auth/register", async (req, res) => {
   try {
-    const { email, password, role, walletAddress } = req.body;
+    const { email, password, role, walletAddress, companyName, registeredLocation, licenseId, businessType } = req.body;
 
     if (!email || !password || !role || !walletAddress) {
       return res.status(400).json({ error: "All fields required" });
@@ -136,11 +166,21 @@ app.post("/auth/register", async (req, res) => {
 
     const passwordHash = await bcrypt.hash(password, 10);
 
+    // FIX: If mobile app sends placeholder, generate a unique address to ensure attribution works
+    let finalWalletAddress = walletAddress;
+    if (!walletAddress || walletAddress === '0x0000000000000000000000000000000000000000') {
+      finalWalletAddress = ethers.Wallet.createRandom().address;
+    }
+
     const user = await User.create({
       email,
       passwordHash,
       role,
-      walletAddress,
+      walletAddress: finalWalletAddress,
+      companyName,
+      registeredLocation,
+      licenseId,
+      businessType
     });
 
     res.json({ success: true, userId: user._id });
@@ -173,6 +213,8 @@ app.post("/auth/login", async (req, res) => {
       success: true,
       token,
       role: user.role,
+      companyName: user.companyName,
+      registeredLocation: user.registeredLocation,
     });
   } catch (err) {
     res.status(500).json({ error: "Login failed" });
@@ -225,8 +267,9 @@ app.post("/admin/retailers", async (req, res) => {
 });
 
 app.post("/product",authMiddleware("Manufacturer"), async (req, res) => {
+  console.log("[createProduct] Request received. user:", req.user.walletAddress, "flags:", req.body.flags);
   try {
-    const { location } = req.body;
+    const { location, flags } = req.body;
 
     if (!location) {
       return res.status(400).json({ error: "location is required" });
@@ -238,10 +281,40 @@ app.post("/product",authMiddleware("Manufacturer"), async (req, res) => {
 
     // Generate product ID
     const productId = generateProductId();
+    console.log("[createProduct] Generated ID:", productId);
 
     // Call blockchain (manufacturer action)
+    console.log("[createProduct] Sending tx to blockchain...");
     const tx = await contract.createProduct(productId, location);
-    await tx.wait();
+    console.log("[createProduct] Tx sent:", tx.hash);
+    
+    // Wait for confirmation OR timeout after 15s
+    try {
+      await Promise.race([
+        tx.wait(),
+        new Promise((_, reject) => setTimeout(() => reject(new Error("Mining timed out")), 15000))
+      ]);
+      console.log("[createProduct] Tx confirmed");
+    } catch (e) {
+      console.warn("[createProduct] Mining took too long or failed:", e.message);
+      // We proceed anyway since the tx was broadcast. 
+      // The frontend will get the txHash and can check status later if needed.
+    }
+
+    // Attribution: Save to local DB so we know WHO did it (since chain says "Server")
+    await ProductHistory.create({
+      productId,
+      manufacturer: req.user.walletAddress, // Store User's wallet
+      status: "Active",
+      hops: [{
+        role: "Manufacturer",
+        actor: req.user.walletAddress,
+        location: location,
+        timestamp: Math.floor(Date.now() / 1000),
+        flags: flags || []
+      }]
+    });
+    console.log("[createProduct] DB entry created");
 
     // Generate QR code (base64)
     const qrDataUrl = await QRCode.toDataURL(productId);
@@ -252,8 +325,9 @@ app.post("/product",authMiddleware("Manufacturer"), async (req, res) => {
       qrCode: qrDataUrl, // frontend can render <img src=...>
       txHash: tx.hash,
     });
+    console.log("[createProduct] Response sent");
   } catch (err) {
-    console.error(err);
+    console.error("[createProduct] Error:", err);
     res.status(500).json({
       error: "Failed to create product",
       details: err.message,
@@ -273,18 +347,50 @@ app.get("/product/:id", async (req, res) => {
       productId
     );
 
+    // Attribution: Fetch from local DB
+    const history = await ProductHistory.findOne({ productId });
+
+    // Helper to get name
+    const getName = async (addr) => {
+       const u = await User.findOne({ walletAddress: addr });
+       return u ? u.companyName : "Unknown";
+    };
+
     // Map numeric role to string and build response
-    const formattedHops = hops.map((h) => ({
-      role: Number(h[0]) === 0 ? "Manufacturer" : "Retailer",
-      actor: h[1],
-      location: h[2],
-      timestamp: Number(h[3].toString()),
+    const formattedHops = await Promise.all(hops.map(async (h, index) => {
+      const actorAddress = h[1];
+      
+      // Prefer DB attribution if available for this index
+      let realActor = actorAddress; // fallback
+      let hopFlags = [];
+      if (history && history.hops && history.hops[index]) {
+         realActor = history.hops[index].actor; 
+         hopFlags = history.hops[index].flags || [];
+      }
+      
+      const actorName = await getName(realActor);
+      
+      return {
+        role: Number(h[0]) === 0 ? "Manufacturer" : "Retailer",
+        actor: realActor,
+        actorName: actorName,
+        location: h[2],
+        timestamp: Number(h[3].toString()),
+        flags: hopFlags
+      };
     }));
     
+    // Prefer DB manufacturer
+    let realManufacturer = manufacturer;
+    if (history && history.manufacturer) {
+       realManufacturer = history.manufacturer;
+    }
+    const manufacturerName = await getName(realManufacturer);
     
     res.json({
       productId: idOnChain,
-      manufacturer,
+      manufacturer: realManufacturer,
+      manufacturerName,
       hops: formattedHops,
     });
   } catch (err) {
@@ -298,7 +404,7 @@ app.get("/product/:id", async (req, res) => {
 app.post("/product/:id/retailer-hop",authMiddleware("Retailer"), async (req, res) => {
   try {
     const productId = req.params.id;
-    const { location } = req.body;
+    const { location, flags } = req.body;
 
     if (!location) {
       return res.status(400).json({ error: "location is required" });
@@ -309,7 +415,34 @@ app.post("/product/:id/retailer-hop",authMiddleware("Retailer"), async (req, res
     }
 
     const tx = await contract.addRetailerHop(productId, location);
-    await tx.wait();
+    console.log("[retailerHop] Tx sent:", tx.hash);
+
+    // Wait for confirmation OR timeout after 15s
+    try {
+      await Promise.race([
+        tx.wait(),
+        new Promise((_, reject) => setTimeout(() => reject(new Error("Mining timed out")), 15000))
+      ]);
+      console.log("[retailerHop] Tx confirmed");
+    } catch (e) {
+       console.warn("[retailerHop] Mining timeout:", e.message);
+    }
+
+    // Attribution: Push to local DB
+    await ProductHistory.updateOne(
+      { productId },
+      { 
+        $push: { 
+          hops: {
+            role: "Retailer",
+            actor: req.user.walletAddress,
+            location: location,
+            timestamp: Math.floor(Date.now() / 1000),
+            flags: flags || []
+          } 
+        } 
+      }
+    );
 
     res.json({
       success: true,
