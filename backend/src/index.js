@@ -412,10 +412,12 @@ app.get("/product/:id", async (req, res) => {
   }
 });
 
+const { detectFraud } = require("./services/fraudDetection");
+
 app.post("/product/:id/retailer-hop",authMiddleware("Retailer"), async (req, res) => {
   try {
     const productId = req.params.id;
-    const { location, flags } = req.body;
+    const { location, flags: clientFlags } = req.body; // Allow client to send flags too if needed
 
     if (!location) {
       return res.status(400).json({ error: "location is required" });
@@ -424,6 +426,22 @@ app.post("/product/:id/retailer-hop",authMiddleware("Retailer"), async (req, res
     if (!contract) {
       return res.status(500).json({ error: "Contract not configured" });
     }
+
+    // 1. Fetch current history from DB to get the Previous Hop
+    let history = await ProductHistory.findOne({ productId });
+    let computedFlags = [];
+    
+    // If not in DB, we might fetching from chain, but for fraud detection rely on DB for speed
+    if (history && history.hops && history.hops.length > 0) {
+       const previousHop = history.hops[history.hops.length - 1]; // Last hop
+       // New timestamp is "now"
+       const currentTimestamp = Math.floor(Date.now() / 1000);
+       
+       computedFlags = detectFraud(previousHop, location, currentTimestamp);
+    }
+    
+    // Merge backend flags with any client flags (if any)
+    const finalFlags = [...(clientFlags || []), ...computedFlags];
 
     const tx = await contract.addRetailerHop(productId, location);
     console.log("[retailerHop] Tx sent:", tx.hash);
@@ -449,7 +467,7 @@ app.post("/product/:id/retailer-hop",authMiddleware("Retailer"), async (req, res
             actor: req.user.walletAddress,
             location: location,
             timestamp: Math.floor(Date.now() / 1000),
-            flags: flags || []
+            flags: finalFlags
           } 
         } 
       }
@@ -459,6 +477,7 @@ app.post("/product/:id/retailer-hop",authMiddleware("Retailer"), async (req, res
       success: true,
       productId,
       location,
+      flags: finalFlags,
       txHash: tx.hash,
     });
   } catch (err) {
