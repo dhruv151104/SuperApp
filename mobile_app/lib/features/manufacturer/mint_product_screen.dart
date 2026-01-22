@@ -9,6 +9,7 @@ import 'package:product_traceability_mobile/core/theme/app_theme.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:uuid/uuid.dart';
 import 'package:qr_flutter/qr_flutter.dart';
+import 'package:image_picker/image_picker.dart';
 
 class MintProductScreen extends ConsumerStatefulWidget {
   const MintProductScreen({super.key});
@@ -24,6 +25,7 @@ class _MintProductScreenState extends ConsumerState<MintProductScreen> {
   final _locationController = TextEditingController(); // Manual or Auto
   bool _isLoading = false;
   String? _txHash;
+  File? _imageFile;
 
   bool _locationFetched = false;
 
@@ -121,6 +123,19 @@ class _MintProductScreenState extends ConsumerState<MintProductScreen> {
     );
   }
 
+  Future<void> _pickImage() async {
+     try {
+       final picker = ImagePicker();
+       final XFile? photo = await picker.pickImage(source: ImageSource.camera, imageQuality: 50);
+       if (photo != null) {
+          setState(() {
+            _imageFile = File(photo.path);
+          });
+       }
+     } catch (e) {
+       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Camera Error: $e")));
+     }
+  }
 
 
   Future<void> _checkGeofenceAndMint() async {
@@ -175,7 +190,12 @@ class _MintProductScreenState extends ConsumerState<MintProductScreen> {
     try {
       final api = ref.read(apiServiceProvider);
       // NOTE: Backend generates the ID. We send location.
-      final result = await api.createProduct(_locationController.text, _productNameController.text, flags: flags);
+      final result = await api.createProduct(
+          _locationController.text, 
+          _productNameController.text, 
+          flags: flags,
+          imagePath: _imageFile?.path
+      );
       
       setState(() {
          _txHash = result['txHash'];
@@ -309,6 +329,52 @@ class _MintProductScreenState extends ConsumerState<MintProductScreen> {
                   ),
                 ),
               ),
+              const SizedBox(height: 24),
+              
+              const Text("Visual Condition Reference", style: TextStyle(fontWeight: FontWeight.bold)),
+              const SizedBox(height: 8),
+              if (_imageFile == null)
+                 InkWell(
+                   onTap: _pickImage,
+                   child: Container(
+                     height: 150,
+                     decoration: BoxDecoration(
+                       color: Colors.grey[200],
+                       borderRadius: BorderRadius.circular(12),
+                       border: Border.all(color: Colors.grey[400]!, style: BorderStyle.solid)
+                     ),
+                     child: const Center(
+                       child: Column(
+                         mainAxisAlignment: MainAxisAlignment.center,
+                         children: [
+                           Icon(Icons.camera_alt, size: 40, color: Colors.grey),
+                           Text("Take Photo of Product", style: TextStyle(color: Colors.grey))
+                         ],
+                       ),
+                     ),
+                   ),
+                 )
+              else 
+                 Stack(
+                   children: [
+                     ClipRRect(
+                       borderRadius: BorderRadius.circular(12),
+                       child: Image.file(_imageFile!, height: 200, width: double.infinity, fit: BoxFit.cover),
+                     ),
+                     Positioned(
+                       top: 8, right: 8,
+                       child: CircleAvatar(
+                         backgroundColor: Colors.white,
+                         child: IconButton(
+                           icon: const Icon(Icons.close, color: Colors.red),
+                           onPressed: () => setState(() => _imageFile = null),
+                         ),
+                       )
+                     )
+                   ],
+                 ),
+
+
               const SizedBox(height: 32),
 
               ElevatedButton.icon(

@@ -1,6 +1,5 @@
 const mongoose = require("mongoose");
 
-// Hop Schema
 const hopSchema = new mongoose.Schema(
   {
     productId: { type: String, index: true },
@@ -8,7 +7,12 @@ const hopSchema = new mongoose.Schema(
     actor: String,
     location: String,
     timestamp: Number,
-    flags: [String]
+    flags: [String],
+    imageUrl: String,
+    visionResult: {
+       isDamaged: Boolean,
+       reason: String
+    }
   },
   { _id: false }
 );
@@ -21,6 +25,11 @@ const productHistorySchema = new mongoose.Schema(
     manufacturer: String,
     status: { type: String, enum: ["Active", "Completed"] }, // Active = In Transit, Completed = Sold/End
     hops: [hopSchema],
+    imageUrl: String, // Manufacturer image
+    visionResult: {
+       isDamaged: Boolean,
+       reason: String
+    },
     createdAt: { type: Date, default: Date.now },
   },
   { collection: "product_history" }

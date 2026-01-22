@@ -12,7 +12,9 @@ import 'package:product_traceability_mobile/services/pdf_service.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:product_traceability_mobile/services/api_service.dart';
 import 'dart:io';
+import 'package:image_picker/image_picker.dart';
 
 class ProductDetailsScreen extends ConsumerStatefulWidget {
   final String productId;
@@ -28,6 +30,7 @@ class _ProductDetailsScreenState extends ConsumerState<ProductDetailsScreen> {
   Map<String, dynamic>? _productData; // JSON from API
 
   bool _isRetailer = false;
+  bool _isManufacturer = false;
   bool _isVerifying = false;
 
   @override
@@ -60,68 +63,186 @@ class _ProductDetailsScreenState extends ConsumerState<ProductDetailsScreen> {
     final wallet = await storage.read(key: 'wallet_address');
     if (mounted) setState(() {
       _isRetailer = role == 'Retailer';
+      _isManufacturer = role == 'Manufacturer';
       _currentWalletAddress = wallet;
     });
   }
 
+
+
+// ... (imports)
+
   Future<void> _verifyProduct() async {
     setState(() => _isVerifying = true);
     try {
-      // Check service
+      // 1. Check Location
       bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
       if (!serviceEnabled) {
-        if (mounted) {
-           _showLocationDialog(
-              "Location Services Disabled", 
-              "Please enable location services to verify this product.",
-              () async {
-                 await Geolocator.openLocationSettings();
-                 // User can try again manually
-              }
-           );
-        }
-        return;
+          if (mounted) _showLocationDialog("Location Disabled", "Enable location?", () async => await Geolocator.openLocationSettings());
+          return;
       }
-
-      // Check permission
       LocationPermission permission = await Geolocator.checkPermission();
-      if (permission == LocationPermission.denied) {
-        permission = await Geolocator.requestPermission();
-        if (permission == LocationPermission.denied) {
-           if (mounted) {
-             ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Location permissions are denied')));
-           }
-           return;
-        }
-      }
-      
+      if (permission == LocationPermission.denied) permission = await Geolocator.requestPermission();
       if (permission == LocationPermission.deniedForever) {
-         if (mounted) {
-           _showLocationDialog(
-              "Permission Denied", 
-              "Location permission is permanently denied. Please enable it in settings.",
-              () async {
-                 await Geolocator.openAppSettings();
-              }
-           );
-        }
-        return;
+          if (mounted) _showLocationDialog("Permission Denied", "Enable permission in settings?", () async => await Geolocator.openAppSettings());
+          return;
       }
 
       final position = await Geolocator.getCurrentPosition(desiredAccuracy: LocationAccuracy.best);
       final location = "${position.latitude}, ${position.longitude}";
+
+      // 2. Ask for Visual Evidence (Retailer Flow)
+      bool? includePhoto;
+      if (mounted) {
+         includePhoto = await showDialog<bool>(
+            context: context,
+            builder: (ctx) => AlertDialog(
+              title: const Text("Visual Verification?"),
+              content: const Text("Do you want to document the condition of this product with a photo?"),
+              actions: [
+                TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text("No, just verify")),
+                ElevatedButton.icon(
+                   onPressed: () => Navigator.pop(ctx, true), 
+                   icon: const Icon(Icons.camera_alt), 
+                   label: const Text("Yes, Check Quality")
+                )
+              ],
+            )
+         );
+      }
+      if (includePhoto == null) return; // Cancelled
+
+      String? imagePath;
+      if (includePhoto) {
+          final picker = ImagePicker();
+          final XFile? photo = await picker.pickImage(source: ImageSource.camera, imageQuality: 50);
+          if (photo == null) return; // Cancelled photo
+          imagePath = photo.path;
+      }
       
       final api = ref.read(apiServiceProvider);
-      await api.addRetailerHop(widget.productId, location);
+      await api.addRetailerHop(widget.productId, location, imagePath: imagePath);
       
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Product Verified at $location!")));
+        showDialog(
+           context: context,
+           builder: (_) => AlertDialog(
+             title: const Text("Verified!"),
+             content: Column(mainAxisSize: MainAxisSize.min, children: [
+                const Icon(Icons.check_circle, color: Colors.green, size: 48),
+                const SizedBox(height: 8),
+                Text("Product verified at $location"),
+                if (includePhoto == true) ...[
+                   const SizedBox(height: 8),
+                   const Text("Visual Evidence Recorded", style: TextStyle(fontWeight: FontWeight.bold, color: Colors.blue))
+                ]
+             ]),
+             actions: [TextButton(onPressed: () => Navigator.pop(context), child: const Text("OK"))],
+           )
+        );
       }
-      _fetchDetails(); // Refresh
+      _fetchDetails(); 
     } catch (e) {
       if(mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Error: $e")));
     } finally {
       if (mounted) setState(() => _isVerifying = false);
+    }
+  }
+
+  Future<void> _performConsumerCheck() async {
+    final picker = ImagePicker();
+    final XFile? photo = await picker.pickImage(source: ImageSource.camera, imageQuality: 50);
+    if (photo == null) return;
+
+    if(mounted) {
+       showDialog(
+         context: context,
+         barrierDismissible: false,
+         builder: (_) => const Center(child: CircularProgressIndicator())
+       );
+    }
+
+    try {
+       final api = ref.read(apiServiceProvider);
+       // Passing productId enables Backend to fetch Manufacturer's Reference Image
+       // for "Spot the Difference" / Comparative Analysis
+       final result = await api.analyzeImage(photo.path, productId: widget.productId);
+       final analysis = result['result'];
+       
+       if(mounted) {
+          Navigator.pop(context); // Close loader
+          
+          bool isDamaged = analysis['isDamaged'] == true;
+          showDialog(
+            context: context,
+            builder: (_) => AlertDialog(
+               title: Text(isDamaged ? "Analysis Result" : "Analysis Result"), 
+               content: Column(
+                 mainAxisSize: MainAxisSize.min,
+                 crossAxisAlignment: CrossAxisAlignment.stretch,
+                 children: [
+                    Container(
+                      padding: const EdgeInsets.all(16),
+                      decoration: BoxDecoration(
+                        color: isDamaged ? Colors.red.withOpacity(0.1) : Colors.green.withOpacity(0.1),
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: isDamaged ? Colors.red : Colors.green, width: 2)
+                      ),
+                      child: Column(
+                        children: [
+                           Icon(
+                             isDamaged ? Icons.gpp_bad : Icons.verified_user, 
+                             color: isDamaged ? Colors.red : Colors.green, 
+                             size: 48
+                           ),
+                           const SizedBox(height: 12),
+                           Text(
+                             isDamaged ? "AI Detected Damage" : "Verified Intact",
+                             style: TextStyle(
+                                fontWeight: FontWeight.bold,
+                                fontSize: 18,
+                                color: isDamaged ? Colors.red : Colors.green
+                             ),
+                           ),
+                           const SizedBox(height: 8),
+                           Divider(color: isDamaged ? Colors.red.withOpacity(0.3) : Colors.green.withOpacity(0.3)),
+                           const SizedBox(height: 8),
+                           Text(
+                             analysis['reason'] ?? "No reason provided", 
+                             textAlign: TextAlign.center,
+                             style: TextStyle(
+                               fontSize: 14, 
+                               color: Colors.black87,
+                               fontWeight: FontWeight.w500
+                             )
+                           ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    const Text(
+                       "Private Analysis: This result is for your reference only and is not recorded on the blockchain.", 
+                       textAlign: TextAlign.center,
+                       style: TextStyle(fontSize: 11, color: Colors.grey)
+                    )
+                 ],
+               ),
+               actions: [
+                 SizedBox(
+                   width: double.infinity,
+                   child: ElevatedButton(
+                     onPressed: ()=>Navigator.pop(context), 
+                     style: ElevatedButton.styleFrom(backgroundColor: isDamaged ? Colors.red : Colors.green, foregroundColor: Colors.white),
+                     child: const Text("OK")
+                   ),
+                 )
+               ],
+            )
+          );
+       }
+    } catch(e) {
+       if(mounted) Navigator.pop(context);
+       if(mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Analysis failed"))); 
     }
   }
 
@@ -245,20 +366,22 @@ class _ProductDetailsScreenState extends ConsumerState<ProductDetailsScreen> {
           )
         ],
       ),
-      floatingActionButton: _isRetailer 
-        ? FloatingActionButton.extended(
-            onPressed: (_isVerifying || alreadyVerified) ? null : _verifyProduct,
-            label: alreadyVerified 
-                ? const Text("Verified ✅") 
-                : (_isVerifying ? const Text("Verifying...") : const Text("Verify & Receive")),
-            icon: Icon(alreadyVerified ? Icons.check : Icons.check_circle_outline),
-            backgroundColor: alreadyVerified ? Colors.green : Colors.orange,
-            // Ensure disabled look is overridden if we want it green, but FAB usually greys out if onPressed is null.
-            // To keep it green, we might need a workaround or accept the greyed out 'Verified'.
-            // For now, let's allow it to be disabled (grey) but say Verified.
-            // actually if we want it GREEN we should pass a function but checking condition inside.
-          )
-        : null,
+      floatingActionButton: (_isManufacturer || (_isRetailer && alreadyVerified)) 
+        ? null 
+        : FloatingActionButton.extended(
+            onPressed: (_isVerifying) 
+                ? null 
+                // Logic: If we are here, it's either Unverified Retailer OR Consumer
+                : (_isRetailer) ? _verifyProduct : _performConsumerCheck,
+            
+            label: (_isRetailer)
+                ? (_isVerifying ? const Text("Verifying...") : const Text("Verify & Receive"))
+                : const Text("✨ AI Quality Check"),
+            
+            icon: Icon((_isRetailer) ? Icons.check_circle_outline : Icons.camera_enhance),
+            
+            backgroundColor: (_isRetailer) ? Colors.orange : Colors.deepPurpleAccent,
+      ),
       body: SingleChildScrollView(
         padding: const EdgeInsets.all(24),
         child: Column(
@@ -365,7 +488,7 @@ class _ProductDetailsScreenState extends ConsumerState<ProductDetailsScreen> {
                               fontSize: 11
                             ),
                             
-                            // Flags
+                             // Flags
                              if(hop['flags'] != null && (hop['flags'] as List).isNotEmpty) ...[
                                const SizedBox(height: 8),
                                Container(
@@ -386,6 +509,116 @@ class _ProductDetailsScreenState extends ConsumerState<ProductDetailsScreen> {
                                    ],
                                  ),
                                )
+                             ],
+                             
+                             // Visual Evidence & AI Analysis
+                             if (hop['imageUrl'] != null) ...[
+                                const SizedBox(height: 12),
+                                const Text("Visual Evidence:", style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+                                const SizedBox(height: 4),
+                                ClipRRect(
+                                  borderRadius: BorderRadius.circular(8),
+                                  child: GestureDetector(
+                                    onTap: () {
+                                      showDialog(
+                                        context: context,
+                                        builder: (ctx) => Dialog(
+                                          backgroundColor: Colors.transparent,
+                                          insetPadding: EdgeInsets.zero,
+                                          child: Stack(
+                                            alignment: Alignment.center,
+                                            children: [
+                                              InteractiveViewer(
+                                                child: Image.network(
+                                                  "${ApiService.baseUrl}/${hop['imageUrl']}",
+                                                  fit: BoxFit.contain,
+                                                ),
+                                              ),
+                                              Positioned(
+                                                top: 40,
+                                                right: 20,
+                                                child: IconButton(
+                                                  icon: const Icon(Icons.close, color: Colors.white, size: 30),
+                                                  onPressed: () => Navigator.pop(ctx),
+                                                ),
+                                              ),
+                                            ],
+                                          ),
+                                        ),
+                                      );
+                                    },
+                                    child: Stack(
+                                      alignment: Alignment.center,
+                                      children: [
+                                        Image.network(
+                                          "${ApiService.baseUrl}/${hop['imageUrl']}",
+                                          height: 120,
+                                          width: double.infinity,
+                                          fit: BoxFit.cover,
+                                          errorBuilder: (_,__,___) => const Text("Image Load Error", style: TextStyle(fontSize: 10, color: Colors.red)),
+                                        ),
+                                        Container(
+                                          decoration: BoxDecoration(
+                                            color: Colors.black.withOpacity(0.3),
+                                            shape: BoxShape.circle
+                                          ),
+                                          padding: const EdgeInsets.all(8),
+                                          child: const Icon(Icons.zoom_in, color: Colors.white, size: 20),
+                                        )
+                                      ],
+                                    ),
+                                  ),
+                                ),
+                             ],
+
+                             if (hop['visionResult'] != null) ...[
+                                const SizedBox(height: 8),
+                                Container(
+                                  padding: const EdgeInsets.all(8),
+                                  decoration: BoxDecoration(
+                                    color: (hop['visionResult']['isDamaged'] == true) ? Colors.red.withOpacity(0.1) : Colors.green.withOpacity(0.1),
+                                    borderRadius: BorderRadius.circular(8),
+                                    border: Border.all(color: (hop['visionResult']['isDamaged'] == true) ? Colors.red : Colors.green)
+                                  ),
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                       Row(
+                                         children: [
+                                           Icon(
+                                             (hop['visionResult']['isDamaged'] == true) 
+                                                ? Icons.gpp_bad 
+                                                : (hop['visionResult']['reason'].toString().contains("Failed") ? Icons.error_outline : Icons.verified_user),
+                                             size: 16,
+                                             color: (hop['visionResult']['isDamaged'] == true) 
+                                                ? Colors.red 
+                                                : (hop['visionResult']['reason'].toString().contains("Failed") ? Colors.grey : Colors.green)
+                                           ),
+                                           const SizedBox(width: 6),
+                                           Text(
+                                             (hop['visionResult']['isDamaged'] == true) 
+                                                ? "AI Detected Damage" 
+                                                : (hop['visionResult']['reason'].toString().contains("Failed") ? "AI Analysis Unavailable" : "Verified Intact"),
+                                             style: TextStyle(
+                                                fontWeight: FontWeight.bold,
+                                                fontSize: 12,
+                                                color: (hop['visionResult']['isDamaged'] == true) 
+                                                    ? Colors.red 
+                                                    : (hop['visionResult']['reason'].toString().contains("Failed") ? Colors.grey : Colors.green)
+                                             ),
+                                           )
+                                         ],
+                                       ),
+                                       if(hop['visionResult']['reason'] != null) ...[
+                                          const SizedBox(height: 4),
+                                          Text(
+                                            hop['visionResult']['reason'],
+                                            style: TextStyle(fontSize: 11, color: Colors.grey[800])
+                                          )
+                                       ]
+                                    ],
+                                  ),
+                                )
                              ]
                           ],
                         ),

@@ -76,20 +76,50 @@ class ApiService {
     await _storage.deleteAll(); // Clear all
   }
 
-  Future<Map<String, dynamic>> createProduct(String location, String productName, {List<String>? flags}) async {
+  Future<Map<String, dynamic>> createProduct(String location, String productName, {List<String>? flags, String? imagePath}) async {
     final token = await getToken();
-    final response = await http.post(
-      Uri.parse('$baseUrl/product'),
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': 'Bearer $token',
-      },
-      body: jsonEncode({
-        'location': location,
-        'productName': productName,
-        'flags': flags ?? []
-      }),
-    );
+    final uri = Uri.parse('$baseUrl/product');
+    
+    var request = http.MultipartRequest('POST', uri);
+    request.headers.addAll({
+      'Authorization': 'Bearer $token',
+      // Content-Type is auto-set to multipart/form-data
+    });
+
+    request.fields['location'] = location;
+    request.fields['productName'] = productName;
+    // For arrays in multipart, often easier to JSON encode or separate fields. 
+    // Backend logic: `if (typeof clientFlags === 'string') JSON.parse...`
+    // Or node multer handles array if same key used multiple times? 
+    // Let's use JSON string for simplicity as my backend handles parsing for retailer. 
+    // Wait, createProduct backend: `req.body` with multer populates fields. 
+    // Safest is to just send simple fields or check backend.
+    // I'll stick to a simple strategy: duplicate keys for array OR json string.
+    // Let's do JSON string for flags if backend supports or just simple if empty.
+    // Actually backend `createProduct` expects `req.body.flags`.
+    // Let's send it as individual fields if possible or JSON.
+    // I will modify backend to parse JSON string if needed, but for now let's try sending as multiple fields?
+    // No, standard is `flags[]` or just `flags`. 
+    // I will try just sending it, if it fails I'll fix backend.
+    if (flags != null) {
+       for(var f in flags) {
+         request.fields['flags'] = f; // This overwrites? Yes in plain Map.
+         // Http MultiPartRequest fields is Map<String, String>. It CANNOT hold array.
+         // So I MUST send as one JSON string or modify backend to read duplicates?
+         // Dart http doesn't support duplicates in `fields` map easily?
+         // Actually `http.MultipartRequest` has `fields` which is `Map<String, String>`.
+         // So I MUST use JSON string (serialized).
+       }
+       // BETTER: Send as JSON string
+       request.fields['flags'] = jsonEncode(flags); 
+    }
+    
+    if (imagePath != null) {
+      request.files.add(await http.MultipartFile.fromPath('image', imagePath));
+    }
+
+    final streamedResponse = await request.send();
+    final response = await http.Response.fromStream(streamedResponse);
 
     if (response.statusCode == 200) {
       return jsonDecode(response.body);
@@ -98,19 +128,26 @@ class ApiService {
     }
   }
 
-  Future<Map<String, dynamic>> addRetailerHop(String productId, String location, {List<String>? flags}) async {
+  Future<Map<String, dynamic>> addRetailerHop(String productId, String location, {List<String>? flags, String? imagePath}) async {
     final token = await getToken();
-    final response = await http.post(
-      Uri.parse('$baseUrl/product/$productId/retailer-hop'),
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': 'Bearer $token',
-      },
-      body: jsonEncode({
-        'location': location,
-        'flags': flags ?? []
-      }),
-    );
+    final uri = Uri.parse('$baseUrl/product/$productId/retailer-hop');
+    
+    var request = http.MultipartRequest('POST', uri);
+    request.headers.addAll({
+      'Authorization': 'Bearer $token',
+    });
+
+    request.fields['location'] = location;
+    if (flags != null) {
+       request.fields['flags'] = jsonEncode(flags);
+    }
+    
+    if (imagePath != null) {
+      request.files.add(await http.MultipartFile.fromPath('image', imagePath));
+    }
+
+    final streamedResponse = await request.send();
+    final response = await http.Response.fromStream(streamedResponse);
 
     if (response.statusCode == 200) {
       return jsonDecode(response.body);
@@ -173,6 +210,25 @@ class ApiService {
       return jsonDecode(response.body);
     } else {
       throw Exception(jsonDecode(response.body)['error'] ?? 'Failed to fetch analytics');
+    }
+  }
+
+  Future<Map<String, dynamic>> analyzeImage(String imagePath, {String? productId}) async {
+    final uri = Uri.parse('$baseUrl/analyze');
+    var request = http.MultipartRequest('POST', uri);
+    
+    request.files.add(await http.MultipartFile.fromPath('image', imagePath));
+    if (productId != null) {
+      request.fields['productId'] = productId;
+    }
+
+    final streamedResponse = await request.send();
+    final response = await http.Response.fromStream(streamedResponse);
+
+    if (response.statusCode == 200) {
+       return jsonDecode(response.body);
+    } else {
+       throw Exception("Analysis failed");
     }
   }
 

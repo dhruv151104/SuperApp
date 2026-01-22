@@ -13,6 +13,22 @@ dotenv.config();
 
 const QRCode = require("qrcode");
 const crypto = require("crypto");
+const multer = require("multer");
+const path = require("path");
+const { analyzeImageCondition } = require("./services/visionDetection");
+
+// Multer Config
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    cb(null, "uploads/");
+  },
+  filename: (req, file, cb) => {
+    // Unique filename: timestamp-random.jpg
+    const uniqueSuffix = Date.now() + "-" + Math.round(Math.random() * 1e9);
+    cb(null, uniqueSuffix + path.extname(file.originalname));
+  },
+});
+const upload = multer({ storage: storage });
 
 function generateProductId() {
   // Example: PROD-2026-8f3a2c
@@ -24,6 +40,7 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 app.use(morgan("dev"));
+app.use("/uploads", express.static("uploads")); // Serve images
 
 const PORT = process.env.PORT || 4000;
 const MONGODB_URI =
@@ -266,10 +283,11 @@ app.delete("/admin/nuke", async (req, res) => {
   }
 });
 
-app.post("/product",authMiddleware("Manufacturer"), async (req, res) => {
+    app.post("/product", authMiddleware("Manufacturer"), upload.single("image"), async (req, res) => {
   console.log("[createProduct] Request received. user:", req.user.walletAddress, "flags:", req.body.flags);
   try {
     const { location, flags, productName } = req.body;
+    const file = req.file;
 
     if (!location) {
       return res.status(400).json({ error: "location is required" });
@@ -277,6 +295,39 @@ app.post("/product",authMiddleware("Manufacturer"), async (req, res) => {
 
     if (!contract) {
       return res.status(500).json({ error: "Contract not configured" });
+    }
+
+    // Vision Analysis
+    let visionResult = null;
+    let imageUrl = null;
+    
+    // Parse flags safely
+    let parsedFlags = [];
+    if (Array.isArray(flags)) {
+      parsedFlags = flags;
+    } else if (typeof flags === 'string') {
+       try {
+         parsedFlags = JSON.parse(flags);
+         if (!Array.isArray(parsedFlags)) parsedFlags = [parsedFlags]; // handle single string "flag"
+       } catch (e) {
+         parsedFlags = [flags];
+       }
+    }
+    
+    let manufacturerFlags = [...parsedFlags];
+
+    if (file) {
+       console.log("[createProduct] Image uploaded:", file.path);
+       imageUrl = file.path;
+       const analysis = await analyzeImageCondition(file.path, productName);
+       console.log("[createProduct] Vision Analysis:", analysis);
+       
+       visionResult = analysis;
+       if (analysis.isDamaged) {
+          manufacturerFlags.push("DAMAGED_AT_SOURCE");
+       } else {
+          // ensure initial state is clean?
+       }
     }
 
     // Generate product ID
@@ -302,12 +353,16 @@ app.post("/product",authMiddleware("Manufacturer"), async (req, res) => {
         productName: productName || "Unnamed Product",
         manufacturer: req.user.walletAddress, 
         status: "Active",
+        imageUrl: imageUrl, 
+        visionResult: visionResult,
         hops: [{
           role: "Manufacturer",
           actor: req.user.walletAddress,
           location: location,
           timestamp: Math.floor(Date.now() / 1000),
-          flags: flags || []
+          flags: manufacturerFlags,
+          imageUrl: imageUrl, // Manufacturer hop also has image
+          visionResult: visionResult
         }]
       });
       console.log("[createProduct] DB entry created");
@@ -325,6 +380,7 @@ app.post("/product",authMiddleware("Manufacturer"), async (req, res) => {
       productId,
       qrCode: qrDataUrl, // frontend can render <img src=...>
       txHash: tx.hash,
+      visionResult
     });
     console.log("[createProduct] Response sent");
   } catch (err) {
@@ -364,9 +420,14 @@ app.get("/product/:id", async (req, res) => {
       // Prefer DB attribution if available for this index
       let realActor = actorAddress; // fallback
       let hopFlags = [];
+      let hopImage = null;
+      let hopVision = null;
+
       if (history && history.hops && history.hops[index]) {
          realActor = history.hops[index].actor; 
          hopFlags = history.hops[index].flags || [];
+         hopImage = history.hops[index].imageUrl;
+         hopVision = history.hops[index].visionResult;
       }
       
       const actorName = await getName(realActor);
@@ -377,14 +438,20 @@ app.get("/product/:id", async (req, res) => {
         actorName: actorName,
         location: h[2],
         timestamp: Number(h[3].toString()),
-        flags: hopFlags
+        flags: hopFlags,
+        imageUrl: hopImage,
+        visionResult: hopVision
       };
     }));
     
     // Prefer DB manufacturer
     let realManufacturer = manufacturer;
-    if (history && history.manufacturer) {
-       realManufacturer = history.manufacturer;
+    let manufacturerImage = null;
+    let manufacturerVision = null;
+    if (history) {
+       realManufacturer = history.manufacturer || manufacturer;
+       manufacturerImage = history.imageUrl;
+       manufacturerVision = history.visionResult;
     }
     const manufacturerName = await getName(realManufacturer);
     
@@ -393,13 +460,14 @@ app.get("/product/:id", async (req, res) => {
       productName: history ? history.productName : "Unknown Product",
       manufacturer: realManufacturer,
       manufacturerName,
+      imageUrl: manufacturerImage,
+      visionResult: manufacturerVision,
       hops: formattedHops,
     });
   } catch (err) {
     console.error(err);
     
-    // Self-Healing: If blockchain explicitly fails with BAD_DATA or reverted (meaning ID doesn't exist),
-    // remove the ghost record from DB.
+    // Self-Healing
     if (err.code === 'BAD_DATA' || err.message.includes('reverted') || err.message.includes('call revert exception')) {
        console.warn(`[Self-Healing] Detected ghost record for ${productId}. Deleting from DB.`);
        await ProductHistory.deleteOne({ productId });
@@ -414,10 +482,13 @@ app.get("/product/:id", async (req, res) => {
 
 const { detectFraud } = require("./services/fraudDetection");
 
-app.post("/product/:id/retailer-hop",authMiddleware("Retailer"), async (req, res) => {
+app.post("/product/:id/retailer-hop", authMiddleware("Retailer"), upload.single("image"), async (req, res) => {
   try {
     const productId = req.params.id;
-    const { location, flags: clientFlags } = req.body; // Allow client to send flags too if needed
+    // multipart/form-data sends fields as strings. flags might need parsing if sent as JSON string, but usually simple fields work.
+    // If client sends flags as array in multipart, multer handles it? simplified: client will send 'location' string.
+    let { location, flags: clientFlags } = req.body; 
+    const file = req.file;
 
     if (!location) {
       return res.status(400).json({ error: "location is required" });
@@ -426,10 +497,36 @@ app.post("/product/:id/retailer-hop",authMiddleware("Retailer"), async (req, res
     if (!contract) {
       return res.status(500).json({ error: "Contract not configured" });
     }
+    
+    // Parse flags if string (common in multipart)
+    if (typeof clientFlags === 'string') {
+        try { clientFlags = JSON.parse(clientFlags); } catch(e) { clientFlags = [clientFlags]; }
+    }
 
-    // 1. Fetch current history from DB to get the Previous Hop
+    // 0. Fetch history first (Needed for Vision Context & Fraud Detection)
     let history = await ProductHistory.findOne({ productId });
-    let computedFlags = [];
+    const productName = history ? history.productName : "Unknown";
+
+    // 1. Vision Analysis
+    let visionResult = null;
+    let imageUrl = null;
+    let visionFlags = [];
+
+    if (file) {
+       console.log("[retailerHop] Image uploaded:", file.path);
+       imageUrl = file.path;
+       const analysis = await analyzeImageCondition(file.path, productName);
+       console.log("[retailerHop] Vision Analysis:", analysis);
+       
+       visionResult = analysis;
+       if (analysis.isDamaged) {
+          visionFlags.push("DAMAGED: " + analysis.reason);
+       }
+    }
+
+
+    // 2. Fraud Detection (Impossible Travel)
+    let fraudFlags = [];
     
     // If not in DB, we might fetching from chain, but for fraud detection rely on DB for speed
     if (history && history.hops && history.hops.length > 0) {
@@ -437,11 +534,11 @@ app.post("/product/:id/retailer-hop",authMiddleware("Retailer"), async (req, res
        // New timestamp is "now"
        const currentTimestamp = Math.floor(Date.now() / 1000);
        
-       computedFlags = detectFraud(previousHop, location, currentTimestamp);
+       fraudFlags = detectFraud(previousHop, location, currentTimestamp);
     }
     
     // Merge backend flags with any client flags (if any)
-    const finalFlags = [...(clientFlags || []), ...computedFlags];
+    const finalFlags = [...(clientFlags || []), ...fraudFlags, ...visionFlags];
 
     const tx = await contract.addRetailerHop(productId, location);
     console.log("[retailerHop] Tx sent:", tx.hash);
@@ -467,7 +564,9 @@ app.post("/product/:id/retailer-hop",authMiddleware("Retailer"), async (req, res
             actor: req.user.walletAddress,
             location: location,
             timestamp: Math.floor(Date.now() / 1000),
-            flags: finalFlags
+            flags: finalFlags,
+            imageUrl: imageUrl, 
+            visionResult: visionResult
           } 
         } 
       }
@@ -478,6 +577,7 @@ app.post("/product/:id/retailer-hop",authMiddleware("Retailer"), async (req, res
       productId,
       location,
       flags: finalFlags,
+      visionResult,
       txHash: tx.hash,
     });
   } catch (err) {
@@ -506,6 +606,40 @@ app.post("/product/:id/retailer-hop",authMiddleware("Retailer"), async (req, res
 //       .json({ error: "Failed to complete product", details: err.message });
 //   }
 // });
+
+// Standalone Analysis Endpoint (No Blockchain/DB storage)
+// Useful for Consumers to "Check" a product before buying, or for testing.
+app.post("/analyze", upload.single("image"), async (req, res) => {
+  try {
+    const file = req.file;
+    const productName = req.body.productName || ""; 
+    const productId = req.body.productId;
+
+    if (!file) {
+      return res.status(400).json({ error: "Image file required" });
+    }
+
+    let referenceImage = null;
+    if (productId) {
+       const history = await ProductHistory.findOne({ productId });
+       if (history && history.imageUrl) {
+          console.log("[Analyze] Found Reference Image for Comparison:", history.imageUrl);
+          referenceImage = history.imageUrl;
+       }
+    }
+
+    console.log(`[Analyze] Analysis Request. Product: ${productName}, ID: ${productId}, HasRef: ${!!referenceImage}`);
+    const analysis = await analyzeImageCondition(file.path, productName, referenceImage);
+    
+    res.json({
+      success: true,
+      result: analysis
+    });
+  } catch(err) {
+    console.error("[Analyze] Error:", err.message);
+    res.status(500).json({ error: "Analysis failed" });
+  }
+});
 
 // Start server after DB + blockchain init
 
