@@ -12,9 +12,15 @@ import 'package:product_traceability_mobile/features/profile/profile_screen.dart
 import 'package:product_traceability_mobile/features/scan/batch_scan_screen.dart';
 import 'package:product_traceability_mobile/features/analytics/partner_list_screen.dart';
 
+import 'package:product_traceability_mobile/features/splash/splash_screen.dart';
+
 final appRouter = GoRouter(
-  initialLocation: '/',
+  initialLocation: '/splash',
   routes: [
+    GoRoute(
+      path: '/splash',
+      builder: (context, state) => const SplashScreen(),
+    ),
     GoRoute(
       path: '/',
       builder: (context, state) => const RoleSelectionScreen(),
