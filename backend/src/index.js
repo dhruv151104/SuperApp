@@ -515,7 +515,12 @@ app.post("/product/:id/retailer-hop", authMiddleware("Retailer"), upload.single(
     if (file) {
        console.log("[retailerHop] Image uploaded:", file.path);
        imageUrl = file.path;
-       const analysis = await analyzeImageCondition(file.path, productName);
+       
+       // Pass Manufacturer's original image as reference if available
+       const referencePath = history ? history.imageUrl : null;
+       console.log("[retailerHop] Using Reference Image:", referencePath);
+
+       const analysis = await analyzeImageCondition(file.path, productName, referencePath);
        console.log("[retailerHop] Vision Analysis:", analysis);
        
        visionResult = analysis;
