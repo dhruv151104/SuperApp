@@ -121,20 +121,52 @@ class _ProductDetailsScreenState extends ConsumerState<ProductDetailsScreen> {
       }
       
       final api = ref.read(apiServiceProvider);
-      await api.addRetailerHop(widget.productId, location, imagePath: imagePath);
+      final result = await api.addRetailerHop(widget.productId, location, imagePath: imagePath);
+      final visionResult = result['visionResult'];
       
       if (mounted) {
+        bool isDamaged = visionResult != null && visionResult['isDamaged'] == true;
+        
         showDialog(
            context: context,
            builder: (_) => AlertDialog(
-             title: const Text("Verified!"),
+             title: Text(isDamaged ? "Analysis Result" : "Verified!"),
              content: Column(mainAxisSize: MainAxisSize.min, children: [
-                const Icon(Icons.check_circle, color: Colors.green, size: 48),
+                Icon(isDamaged ? Icons.warning_amber_rounded : Icons.check_circle, 
+                     color: isDamaged ? Colors.red : Colors.green, size: 48),
                 const SizedBox(height: 8),
                 Text("Product verified at $location"),
-                if (includePhoto == true) ...[
+                if (includePhoto == true && visionResult == null) ...[
                    const SizedBox(height: 8),
                    const Text("Visual Evidence Recorded", style: TextStyle(fontWeight: FontWeight.bold, color: Colors.blue))
+                ],
+                if (visionResult != null) ...[
+                   const SizedBox(height: 12),
+                   Container(
+                     padding: const EdgeInsets.all(8),
+                     decoration: BoxDecoration(
+                       color: isDamaged ? Colors.red.withOpacity(0.1) : Colors.green.withOpacity(0.1),
+                       borderRadius: BorderRadius.circular(8),
+                       border: Border.all(color: isDamaged ? Colors.red : Colors.green, width: 1)
+                     ),
+                     child: Column(
+                       children: [
+                          Text(
+                            isDamaged ? "AI Detected Damage" : "Verified Intact",
+                            style: TextStyle(
+                               fontWeight: FontWeight.bold,
+                               color: isDamaged ? Colors.red : Colors.green
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            visionResult['reason'] ?? "", 
+                            textAlign: TextAlign.center,
+                            style: const TextStyle(fontSize: 12),
+                          )
+                       ]
+                     )
+                   )
                 ]
              ]),
              actions: [TextButton(onPressed: () => Navigator.pop(context), child: const Text("OK"))],

@@ -12,7 +12,8 @@ import 'package:flutter_animate/flutter_animate.dart';
 class ScanItem {
   final String id;
   final String? imagePath;
-  ScanItem(this.id, [this.imagePath]);
+  dynamic visionResult;
+  ScanItem(this.id, [this.imagePath, this.visionResult]);
 }
 
 class BatchScanScreen extends ConsumerStatefulWidget {
@@ -171,7 +172,8 @@ class _BatchScanScreenState extends ConsumerState<BatchScanScreen> {
     // Process sequentially
     for (final item in List.from(_scannedItems)) {
        try {
-         await api.addRetailerHop(item.id, _currentLocation!, imagePath: item.imagePath);
+         final result = await api.addRetailerHop(item.id, _currentLocation!, imagePath: item.imagePath);
+         item.visionResult = result['visionResult'];
          succeeded.add(item);
          successCount++;
        } catch (e) {
@@ -187,14 +189,16 @@ class _BatchScanScreenState extends ConsumerState<BatchScanScreen> {
     
     if (mounted) {
        if (failCount == 0 && _scannedItems.isEmpty) {
-         _showResultDialog(true, "Successfully processed $successCount items!");
+         _showResultDialog(true, "Successfully processed $successCount items!", succeeded);
        } else {
-         _showResultDialog(false, "Processed $successCount. Failed $failCount.\nPlease retry failed items.");
+         _showResultDialog(false, "Processed $successCount. Failed $failCount.\nPlease retry failed items.", succeeded);
        }
     }
   }
 
-  void _showResultDialog(bool success, String message) {
+  void _showResultDialog(bool success, String message, [List<ScanItem>? succeeded]) {
+    final damagedItems = succeeded?.where((item) => item.visionResult != null && item.visionResult['isDamaged'] == true).toList() ?? [];
+
     showDialog(
       context: context,
       barrierDismissible: false,
@@ -211,11 +215,40 @@ class _BatchScanScreenState extends ConsumerState<BatchScanScreen> {
             ).animate().scale(duration: 500.ms, curve: Curves.elasticOut),
             const SizedBox(height: 16),
             Text(
-              success ? "Success!" : "Issues Found",
-              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 20),
+              success && damagedItems.isEmpty ? "Success!" : (damagedItems.isNotEmpty ? "Damage Detected" : "Issues Found"),
+              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 20, color: damagedItems.isNotEmpty ? Colors.red : null),
             ),
             const SizedBox(height: 8),
             Text(message, textAlign: TextAlign.center, style: const TextStyle(fontSize: 16)),
+            if (damagedItems.isNotEmpty) ...[
+              const SizedBox(height: 16),
+              const Text("AI Detected Damage in:", style: TextStyle(fontWeight: FontWeight.bold, color: Colors.red)),
+              const SizedBox(height: 8),
+              SizedBox(
+                height: damagedItems.length > 3 ? 150 : null,
+                child: SingleChildScrollView(
+                  child: Column(
+                    children: damagedItems.map((item) => Container(
+                      margin: const EdgeInsets.only(bottom: 8),
+                      padding: const EdgeInsets.all(8),
+                      decoration: BoxDecoration(
+                        color: Colors.red.withOpacity(0.1),
+                        border: Border.all(color: Colors.red.shade200),
+                        borderRadius: BorderRadius.circular(8)
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(item.id, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
+                          const SizedBox(height: 4),
+                          Text(item.visionResult['reason'] ?? '', style: const TextStyle(fontSize: 11)),
+                        ],
+                      ),
+                    )).toList()
+                  )
+                )
+              )
+            ],
             const SizedBox(height: 24),
             SizedBox(
               width: double.infinity,
