@@ -15,7 +15,12 @@ const QRCode = require("qrcode");
 const crypto = require("crypto");
 const multer = require("multer");
 const path = require("path");
+const fs = require("fs");
 const { analyzeImageCondition } = require("./services/visionDetection");
+
+if (!fs.existsSync("uploads/")) {
+  fs.mkdirSync("uploads/", { recursive: true });
+}
 
 // Multer Config
 const storage = multer.diskStorage({
