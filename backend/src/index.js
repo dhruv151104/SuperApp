@@ -54,7 +54,7 @@ const PRIVATE_KEY = process.env.PRIVATE_KEY || "";
 
 // Minimal ABI for interacting with ProductTraceability
 const ProductTraceabilityABI =
-  require("../../blockchain/artifacts/contracts/ProductTraceability.sol/ProductTraceability.json").abi;
+  require("./ProductTraceability.json").abi;
 
 
 // Ethers setup (read/write as contract owner)
