@@ -4,7 +4,7 @@ import 'package:http/http.dart' as http;
 
 class ApiService {
   // Replace with your machine's IP address
-  static const String baseUrl = "http://192.168.1.33:4000"; 
+  static const String baseUrl = "https://yiyqi-103-250-47-227.run.pinggy-free.link"; 
   final _storage = const FlutterSecureStorage();
 
   Future<String?> getToken() async {

@@ -120,8 +120,30 @@ app.post("/auth/register", async (req, res) => {
   try {
     const { email, password, role, walletAddress, companyName, registeredLocation, licenseId, businessType, contactPerson, contactPhone } = req.body;
 
-    if (!email || !password || !role || !walletAddress) {
-      return res.status(400).json({ error: "All fields required" });
+    // Strict validation
+    if (!email || !password || !role) {
+      return res.status(400).json({ error: "Email, password, and role are required" });
+    }
+    
+    // Validate email format basic
+    if (!/^[^@]+@[^@]+\.[^@]+$/.test(email)) {
+      return res.status(400).json({ error: "Invalid email format" });
+    }
+
+    if (password.length < 6) {
+      return res.status(400).json({ error: "Password must be at least 6 characters" });
+    }
+
+    if (!companyName || !companyName.trim()) {
+       return res.status(400).json({ error: "Company Name is required" });
+    }
+
+    if (!contactPerson || !contactPerson.trim()) {
+       return res.status(400).json({ error: "Contact Person is required" });
+    }
+    
+    if (!contactPhone || !contactPhone.trim()) {
+       return res.status(400).json({ error: "Contact Phone is required" });
     }
 
     const passwordHash = await bcrypt.hash(password, 10);
@@ -147,7 +169,10 @@ app.post("/auth/register", async (req, res) => {
 
     res.json({ success: true, userId: user._id });
   } catch (err) {
-    res.status(500).json({ error: "User registration failed" });
+    if (err.code === 11000 || err.name === 'MongoServerError' || (err.message && err.message.includes('11000')) || (err.message && err.message.includes('duplicate key'))) {
+       return res.status(400).json({ error: "Email is already registered" });
+    }
+    res.status(500).json({ error: "Email is already registered or input invalid" });
   }
 });
 
@@ -655,7 +680,7 @@ async function start() {
 
     initBlockchain();
 
-    app.listen(PORT, () => {
+    app.listen(PORT, "0.0.0.0", () => {
       console.log(`[server] Listening on port ${PORT}`);
     });
   } catch (err) {
