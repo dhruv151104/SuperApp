@@ -360,7 +360,7 @@ class _ProductDetailsScreenState extends ConsumerState<ProductDetailsScreen> {
   Widget _buildImage(String? imageUrl, {double? height, double? width, BoxFit? fit}) {
     if (imageUrl == null || imageUrl.isEmpty) return const SizedBox();
     
-    if (imageUrl.startsWith('data:image/')) {
+    if (imageUrl.startsWith('data:')) {
        final split = imageUrl.split(',');
        if (split.length == 2) {
           try {

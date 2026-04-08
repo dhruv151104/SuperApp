@@ -7,7 +7,7 @@ const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 function toGenerativePart(dataInput, defaultMimeType = "image/jpeg") {
   if (Buffer.isBuffer(dataInput)) {
     return { inlineData: { data: dataInput.toString("base64"), mimeType: defaultMimeType } };
-  } else if (typeof dataInput === "string" && dataInput.startsWith("data:image/")) {
+  } else if (typeof dataInput === "string" && dataInput.startsWith("data:")) {
     const parts = dataInput.split(",");
     const mimeMatch = parts[0].match(/:(.*?);/);
     return { inlineData: { data: parts[1], mimeType: mimeMatch ? mimeMatch[1] : defaultMimeType } };
