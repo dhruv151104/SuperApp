@@ -4,14 +4,17 @@ const fs = require("fs");
 // Initialize the API Client with the API Key
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
-// Helper function to convert local file to Generative Part
-function fileToGenerativePart(path, mimeType) {
-  return {
-    inlineData: {
-      data: Buffer.from(fs.readFileSync(path)).toString("base64"),
-      mimeType,
-    },
-  };
+function toGenerativePart(dataInput, defaultMimeType = "image/jpeg") {
+  if (Buffer.isBuffer(dataInput)) {
+    return { inlineData: { data: dataInput.toString("base64"), mimeType: defaultMimeType } };
+  } else if (typeof dataInput === "string" && dataInput.startsWith("data:image/")) {
+    const parts = dataInput.split(",");
+    const mimeMatch = parts[0].match(/:(.*?);/);
+    return { inlineData: { data: parts[1], mimeType: mimeMatch ? mimeMatch[1] : defaultMimeType } };
+  } else {
+    // Fallback for direct file path
+    return { inlineData: { data: Buffer.from(fs.readFileSync(dataInput)).toString("base64"), mimeType: defaultMimeType } };
+  }
 }
 
 /**
@@ -35,13 +38,13 @@ async function analyzeImageCondition(imagePath, productName, referenceImagePath)
     const parts = [];
 
     // 1. Current Image (Always present)
-    parts.push(fileToGenerativePart(imagePath, "image/jpeg"));
+    parts.push(toGenerativePart(imagePath, "image/jpeg"));
 
     let prompt = "";
     
-    if (referenceImagePath && fs.existsSync(referenceImagePath)) {
+    if (referenceImagePath) {
        // 2. Reference Image
-       parts.unshift(fileToGenerativePart(referenceImagePath, "image/jpeg")); // Ref first
+       parts.unshift(toGenerativePart(referenceImagePath, "image/jpeg")); // Ref first
        
        prompt = `
          You are a Supply Chain Quality Assurance Expert.

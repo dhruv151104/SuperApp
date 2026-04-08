@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'dart:convert';
 import 'package:geolocator/geolocator.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -356,6 +357,37 @@ class _ProductDetailsScreenState extends ConsumerState<ProductDetailsScreen> {
     );
   }
 
+  Widget _buildImage(String? imageUrl, {double? height, double? width, BoxFit? fit}) {
+    if (imageUrl == null || imageUrl.isEmpty) return const SizedBox();
+    
+    if (imageUrl.startsWith('data:image/')) {
+       final split = imageUrl.split(',');
+       if (split.length == 2) {
+          try {
+             return Image.memory(
+                base64Decode(split[1].replaceAll(RegExp(r'\s+'), '')),
+                height: height,
+                width: width,
+                fit: fit,
+                errorBuilder: (_,__,___) => const Text("Image Decode Error", style: TextStyle(fontSize: 10, color: Colors.red)),
+             );
+          } catch(e) {
+             return const Text("Image Corrupt", style: TextStyle(fontSize: 10, color: Colors.red));
+          }
+       }
+    }
+    
+    // Legacy support
+    final url = imageUrl.startsWith('http') ? imageUrl : "${ApiService.baseUrl}/$imageUrl";
+    return Image.network(
+       url,
+       height: height,
+       width: width,
+       fit: fit,
+       errorBuilder: (_,__,___) => const Text("Image Load Error", style: TextStyle(fontSize: 10, color: Colors.red)),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     if (_error != null) {
@@ -561,10 +593,7 @@ class _ProductDetailsScreenState extends ConsumerState<ProductDetailsScreen> {
                                             alignment: Alignment.center,
                                             children: [
                                               InteractiveViewer(
-                                                child: Image.network(
-                                                  "${ApiService.baseUrl}/${hop['imageUrl']}",
-                                                  fit: BoxFit.contain,
-                                                ),
+                                                child: _buildImage(hop['imageUrl'].toString(), fit: BoxFit.contain),
                                               ),
                                               Positioned(
                                                 top: 40,
@@ -582,12 +611,11 @@ class _ProductDetailsScreenState extends ConsumerState<ProductDetailsScreen> {
                                     child: Stack(
                                       alignment: Alignment.center,
                                       children: [
-                                        Image.network(
-                                          "${ApiService.baseUrl}/${hop['imageUrl']}",
-                                          height: 120,
-                                          width: double.infinity,
-                                          fit: BoxFit.cover,
-                                          errorBuilder: (_,__,___) => const Text("Image Load Error", style: TextStyle(fontSize: 10, color: Colors.red)),
+                                        _buildImage(
+                                           hop['imageUrl'].toString(),
+                                           height: 120,
+                                           width: double.infinity,
+                                           fit: BoxFit.cover,
                                         ),
                                         Container(
                                           decoration: BoxDecoration(

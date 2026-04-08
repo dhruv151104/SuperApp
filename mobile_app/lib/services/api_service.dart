@@ -4,7 +4,7 @@ import 'package:http/http.dart' as http;
 
 class ApiService {
   // Replace with your machine's IP address
-  static const String baseUrl = "https://yiyqi-103-250-47-227.run.pinggy-free.link"; 
+  static const String baseUrl = "https://product-backend-12xv.onrender.com";
   final _storage = const FlutterSecureStorage();
 
   Future<String?> getToken() async {
@@ -16,7 +16,9 @@ class ApiService {
       Uri.parse('$baseUrl/auth/login'),
       headers: {'Content-Type': 'application/json'},
       body: jsonEncode({'email': email, 'password': password}),
-    );
+    ).timeout(const Duration(seconds: 30), onTimeout: () {
+      throw Exception('Connection timed out. The server is likely waking up from sleep. Please wait a moment and try again.');
+    });
 
     if (response.statusCode == 200) {
       final data = jsonDecode(response.body);
@@ -61,7 +63,9 @@ class ApiService {
         'contactPerson': contactPerson,
         'contactPhone': contactPhone
       }),
-    );
+    ).timeout(const Duration(seconds: 30), onTimeout: () {
+      throw Exception('Connection timed out. The server is likely waking up from sleep. Please wait a moment and try again.');
+    });
 
     if (response.statusCode == 200) {
       return jsonDecode(response.body);
@@ -118,7 +122,9 @@ class ApiService {
       request.files.add(await http.MultipartFile.fromPath('image', imagePath));
     }
 
-    final streamedResponse = await request.send();
+    final streamedResponse = await request.send().timeout(const Duration(seconds: 30), onTimeout: () {
+      throw Exception('Connection timed out. The server is likely waking up from sleep. Please wait a moment and try again.');
+    });
     final response = await http.Response.fromStream(streamedResponse);
 
     if (response.statusCode == 200) {
@@ -146,7 +152,9 @@ class ApiService {
       request.files.add(await http.MultipartFile.fromPath('image', imagePath));
     }
 
-    final streamedResponse = await request.send();
+    final streamedResponse = await request.send().timeout(const Duration(seconds: 30), onTimeout: () {
+      throw Exception('Connection timed out. The server is likely waking up from sleep. Please wait a moment and try again.');
+    });
     final response = await http.Response.fromStream(streamedResponse);
 
     if (response.statusCode == 200) {
@@ -157,7 +165,9 @@ class ApiService {
   }
 
   Future<Map<String, dynamic>> getProduct(String productId) async {
-    final response = await http.get(Uri.parse('$baseUrl/product/$productId'));
+    final response = await http.get(Uri.parse('$baseUrl/product/$productId')).timeout(const Duration(seconds: 30), onTimeout: () {
+      throw Exception('Connection timed out. The server is likely waking up from sleep. Please wait a moment and try again.');
+    });
 
       
     if (response.statusCode == 200) {
@@ -187,7 +197,9 @@ class ApiService {
         'Content-Type': 'application/json',
         'Authorization': 'Bearer $token',
       },
-    );
+    ).timeout(const Duration(seconds: 30), onTimeout: () {
+      throw Exception('Connection timed out. The server is likely waking up from sleep. Please wait a moment and try again.');
+    });
 
     if (response.statusCode == 200) {
       return jsonDecode(response.body) as List<dynamic>;
@@ -204,7 +216,9 @@ class ApiService {
         'Content-Type': 'application/json',
         'Authorization': 'Bearer $token',
       },
-    );
+    ).timeout(const Duration(seconds: 30), onTimeout: () {
+      throw Exception('Connection timed out. The server is likely waking up from sleep. Please wait a moment and try again.');
+    });
 
     if (response.statusCode == 200) {
       return jsonDecode(response.body);
@@ -222,7 +236,9 @@ class ApiService {
       request.fields['productId'] = productId;
     }
 
-    final streamedResponse = await request.send();
+    final streamedResponse = await request.send().timeout(const Duration(seconds: 30), onTimeout: () {
+      throw Exception('Connection timed out. The server is likely waking up from sleep. Please wait a moment and try again.');
+    });
     final response = await http.Response.fromStream(streamedResponse);
 
     if (response.statusCode == 200) {
@@ -240,7 +256,9 @@ class ApiService {
         'Content-Type': 'application/json',
         'Authorization': 'Bearer $token',
       },
-    );
+    ).timeout(const Duration(seconds: 30), onTimeout: () {
+      throw Exception('Connection timed out. The server is likely waking up from sleep. Please wait a moment and try again.');
+    });
 
     if (response.statusCode == 200) {
       return jsonDecode(response.body) as List<dynamic>;

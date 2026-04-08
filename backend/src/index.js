@@ -22,17 +22,8 @@ if (!fs.existsSync("uploads/")) {
   fs.mkdirSync("uploads/", { recursive: true });
 }
 
-// Multer Config
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    cb(null, "uploads/");
-  },
-  filename: (req, file, cb) => {
-    // Unique filename: timestamp-random.jpg
-    const uniqueSuffix = Date.now() + "-" + Math.round(Math.random() * 1e9);
-    cb(null, uniqueSuffix + path.extname(file.originalname));
-  },
-});
+// Multer Config (Base64 Memory Storage)
+const storage = multer.memoryStorage();
 const upload = multer({ storage: storage });
 
 function generateProductId() {
@@ -347,9 +338,9 @@ app.delete("/admin/nuke", async (req, res) => {
     let manufacturerFlags = [...parsedFlags];
 
     if (file) {
-       console.log("[createProduct] Image uploaded:", file.path);
-       imageUrl = file.path;
-       const analysis = await analyzeImageCondition(file.path, productName);
+       console.log("[createProduct] Image uploaded into memory");
+       imageUrl = `data:${file.mimetype};base64,${file.buffer.toString('base64')}`;
+       const analysis = await analyzeImageCondition(file.buffer, productName);
        console.log("[createProduct] Vision Analysis:", analysis);
        
        visionResult = analysis;
@@ -543,14 +534,14 @@ app.post("/product/:id/retailer-hop", authMiddleware("Retailer"), upload.single(
     let visionFlags = [];
 
     if (file) {
-       console.log("[retailerHop] Image uploaded:", file.path);
-       imageUrl = file.path;
+       console.log("[retailerHop] Image uploaded into memory");
+       imageUrl = `data:${file.mimetype};base64,${file.buffer.toString('base64')}`;
        
        // Pass Manufacturer's original image as reference if available
        const referencePath = history ? history.imageUrl : null;
-       console.log("[retailerHop] Using Reference Image:", referencePath);
+       console.log("[retailerHop] Using Reference Image?", !!referencePath);
 
-       const analysis = await analyzeImageCondition(file.path, productName, referencePath);
+       const analysis = await analyzeImageCondition(file.buffer, productName, referencePath);
        console.log("[retailerHop] Vision Analysis:", analysis);
        
        visionResult = analysis;
@@ -664,7 +655,7 @@ app.post("/analyze", upload.single("image"), async (req, res) => {
     }
 
     console.log(`[Analyze] Analysis Request. Product: ${productName}, ID: ${productId}, HasRef: ${!!referenceImage}`);
-    const analysis = await analyzeImageCondition(file.path, productName, referenceImage);
+    const analysis = await analyzeImageCondition(file.buffer, productName, referenceImage);
     
     res.json({
       success: true,
