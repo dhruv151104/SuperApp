@@ -10,7 +10,9 @@ function toGenerativePart(dataInput, defaultMimeType = "image/jpeg") {
   } else if (typeof dataInput === "string" && dataInput.startsWith("data:")) {
     const parts = dataInput.split(",");
     const mimeMatch = parts[0].match(/:(.*?);/);
-    return { inlineData: { data: parts[1], mimeType: mimeMatch ? mimeMatch[1] : defaultMimeType } };
+    let extractedMime = mimeMatch ? mimeMatch[1] : defaultMimeType;
+    if (extractedMime === "application/octet-stream") extractedMime = defaultMimeType;
+    return { inlineData: { data: parts[1], mimeType: extractedMime } };
   } else {
     // Fallback for direct file path
     return { inlineData: { data: Buffer.from(fs.readFileSync(dataInput)).toString("base64"), mimeType: defaultMimeType } };
